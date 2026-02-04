@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version:*)",
+      "Bash(ls:*)",
+      "Bash(git fetch:*)",
+      "Bash(git reset:*)",
+      "Bash(claude plugin install:*)",
+      "Bash(test:*)",
+      "Bash(mv:*)",
+      "Bash(claude --version:*)",
+      "Bash(git clone:*)",
+      "Bash(claude plugin:*)",
+      "Read(//c/Users/a.b/.claude/plugins/marketplaces/**)",
+      "Read(//c/Users/a.b/.claude/**)",
+      "Bash(ln:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(pip install:*)",
+      "Bash(python test_igqk.py:*)",
+      "Bash(python:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(timeout:*)",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(curl:*)",
+      "Bash(docker:*)",
+      "Bash(dir:*)",
+      "Bash(tasklist:*)",
+      "Bash(./check_status.bat)",
+      "Bash(start http://localhost:7860)",
+      "Bash(./kill_frontend.bat)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

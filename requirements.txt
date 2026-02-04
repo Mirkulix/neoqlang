@@ -1,0 +1,19 @@
+# IGQK (Information-Geometric Quantum Compression) Requirements
+
+# Core dependencies
+numpy>=1.21.0
+scipy>=1.7.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Scientific computing
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Optional: For advanced numerical computations
+scikit-learn>=1.0.0
+
+# Development dependencies (optional)
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0

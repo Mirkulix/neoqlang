@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IGQK specific
+*.db
+*.db-journal
+compressed_models/
+models_cache/
+datasets_cache/
+*.pth
+*.safetensors
+*.bin
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+!.env.example
+
+# Temporary files
+*.tmp
+*.bak
+nul
