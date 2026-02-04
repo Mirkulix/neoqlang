@@ -89,22 +89,48 @@ Popular models you can try:
 
 def process_checkbox_selection(selected_models):
     """
-    Extract model ID from checkbox selection
+    Extract model IDs from checkbox selections (supports multiple models)
     Format: "model-name (123,456 downloads)" -> "model-name"
+    Returns comma-separated list of model IDs
     """
     if not selected_models or len(selected_models) == 0:
         return "bert-base-uncased"  # Default fallback
 
-    # Take first selected model
-    first_model = selected_models[0]
+    # Extract all model IDs
+    model_ids = []
+    for model_text in selected_models:
+        # Extract model ID (remove download count if present)
+        if " (" in model_text:
+            model_id = model_text.split(" (")[0]
+        else:
+            model_id = model_text
+        model_ids.append(model_id)
 
-    # Extract model ID (remove download count if present)
-    if " (" in first_model:
-        model_id = first_model.split(" (")[0]
+    # Return comma-separated list
+    return ", ".join(model_ids)
+
+
+def get_select_all_choices():
+    """This will be overridden by JS or we store choices in state"""
+    # Placeholder - will be connected properly via event handlers
+    return []
+
+
+def deselect_all_models():
+    """Deselect all models"""
+    return []
+
+
+def update_model_count(selected_models):
+    """Update the model counter display"""
+    if not selected_models:
+        return "**Selected Models:** 0"
+
+    count = len(selected_models)
+    if count == 1:
+        return f"**Selected Models:** {count} model selected"
     else:
-        model_id = first_model
-
-    return model_id
+        return f"**Selected Models:** {count} models selected - **Batch Compression Enabled!** 🚀"
 
 
 # ============================================================================
@@ -150,6 +176,164 @@ Monitor at: /api/training/status/job_123
 # COMPRESS MODE - Compression
 # ============================================================================
 
+def start_batch_compression(
+    job_name: str,
+    model_source: str,
+    model_identifiers: str,  # Comma-separated list
+    compression_method: str,
+    quality_target: float,
+    auto_validate: bool,
+    progress=gr.Progress()
+):
+    """
+    Batch compression for multiple models simultaneously
+    Processes all selected models in parallel
+    """
+
+    try:
+        # Split model list
+        models = [m.strip() for m in model_identifiers.split(",")]
+        total_models = len(models)
+
+        progress(0, desc=f"🚀 Starting batch compression for {total_models} models...")
+
+        results_text = f"""
+🗜️ BATCH COMPRESSION STARTED
+================================
+
+Total Models: {total_models}
+Job Name: {job_name}
+Compression Method: {compression_method}
+Quality Target: {quality_target * 100}%
+
+================================
+PROCESSING MODELS:
+================================
+
+"""
+
+        # Process each model
+        job_ids = []
+        for i, model_id in enumerate(models):
+            model_progress = (i + 1) / total_models
+            progress(model_progress * 0.3, desc=f"📋 Submitting {i+1}/{total_models}: {model_id}")
+
+            # Map UI values to API format
+            source_map = {
+                "HuggingFace Hub": "huggingface",
+                "Upload File": "upload",
+                "My Models": "local",
+                "URL": "url"
+            }
+
+            method_map = {
+                "AUTO (🤖 AI chooses best)": "auto",
+                "Ternary (16× compression)": "ternary",
+                "Binary (32× compression)": "binary",
+                "Sparse (Variable)": "sparse",
+                "Low-Rank (Variable)": "lowrank"
+            }
+
+            # Submit job for this model
+            payload = {
+                "job_name": f"{job_name} - {model_id}",
+                "model_source": source_map.get(model_source, "huggingface"),
+                "model_identifier": model_id,
+                "compression_method": method_map.get(compression_method, "auto"),
+                "quality_target": quality_target,
+                "auto_validate": auto_validate
+            }
+
+            try:
+                response = requests.post(f"{API_BASE}/compression/start", json=payload, timeout=10)
+
+                if response.status_code == 200:
+                    job_data = response.json()
+                    job_id = job_data.get("job_id", "unknown")
+                    job_ids.append((model_id, job_id))
+
+                    results_text += f"""
+[{i+1}/{total_models}] ✅ {model_id}
+   └─ Job ID: {job_id}
+   └─ Status: Queued
+
+"""
+                else:
+                    results_text += f"""
+[{i+1}/{total_models}] ❌ {model_id}
+   └─ Error: API returned {response.status_code}
+
+"""
+            except Exception as e:
+                results_text += f"""
+[{i+1}/{total_models}] ❌ {model_id}
+   └─ Error: {str(e)}
+
+"""
+
+        # Monitor all jobs
+        results_text += """
+================================
+MONITORING PROGRESS:
+================================
+
+"""
+
+        progress(0.4, desc=f"👀 Monitoring {len(job_ids)} active jobs...")
+
+        # Poll for up to 2 minutes
+        for iteration in range(30):  # 30 iterations * 4 seconds = 2 minutes
+            time.sleep(4)
+
+            overall_progress = 0.4 + (iteration / 30) * 0.5
+
+            completed_jobs = 0
+            for model_id, job_id in job_ids:
+                try:
+                    status_response = requests.get(f"{API_BASE}/compression/status/{job_id}", timeout=5)
+
+                    if status_response.status_code == 200:
+                        status_data = status_response.json()
+                        current_status = status_data.get("status", "unknown")
+
+                        if current_status == "completed":
+                            completed_jobs += 1
+
+                except:
+                    pass
+
+            progress(overall_progress, desc=f"📊 Progress: {completed_jobs}/{len(job_ids)} completed")
+
+            # Check if all completed
+            if completed_jobs == len(job_ids):
+                break
+
+        # Final summary
+        results_text += f"""
+================================
+BATCH COMPRESSION COMPLETE!
+================================
+
+✅ Successfully submitted {len(job_ids)} compression jobs
+⏱️ All jobs are processing in the background
+
+You can monitor individual job status in the API.
+
+"""
+
+        progress(1.0, desc="🎉 Batch compression jobs submitted!")
+        return results_text
+
+    except Exception as e:
+        return f"""
+❌ Batch Compression Failed!
+
+Error: {str(e)}
+
+Please try again or contact support.
+"""
+
+
 def start_compression_job(
     job_name: str,
     model_source: str,
@@ -159,8 +343,24 @@ def start_compression_job(
     auto_validate: bool,
     progress=gr.Progress()
 ):
-    """Start a compression job with real API integration"""
+    """
+    Start compression job(s) - supports single or multiple models
+    Automatically detects comma-separated model lists for batch processing
+    """
 
+    # Check if multiple models selected (comma-separated)
+    if ", " in model_identifier:
+        return start_batch_compression(
+            job_name,
+            model_source,
+            model_identifier,
+            compression_method,
+            quality_target,
+            auto_validate,
+            progress
+        )
+
+    # Single model compression
     try:
         # Progress: Initializing
         progress(0, desc="🚀 Initializing compression job...")
@@ -587,11 +787,24 @@ with gr.Blocks(
 
             # CheckboxGroup for model selection (populated by search)
             model_checkboxes = gr.CheckboxGroup(
-                label="☑️ Select Models from Search Results",
+                label="☑️ Select Models from Search Results (Multi-Selection Supported!)",
                 choices=["bert-base-uncased"],
                 value=[],
                 interactive=True
             )
+
+            # State to store current choices (for Select All functionality)
+            current_choices_state = gr.State(value=["bert-base-uncased"])
+
+            # Selection Control Buttons
+            with gr.Row():
+                select_all_btn = gr.Button("✅ Select All", scale=1, variant="secondary", size="sm")
+                deselect_all_btn = gr.Button("❌ Deselect All", scale=1, variant="secondary", size="sm")
+                with gr.Column(scale=2):
+                    gr.Markdown("**💡 Tip:** Select multiple models for batch compression!")
+
+            # Model Counter Display
+            selected_model_count = gr.Markdown("**Selected Models:** 0")
 
             gr.Markdown("### ⚙️ Step 2: Configure Compression")
 
@@ -650,18 +863,42 @@ with gr.Blocks(
                         placeholder="Click 'Start Compression' to begin..."
                     )
 
-            # Connect search button - updates both checkboxes and results
+            # Connect search button - updates checkboxes, results, AND state
+            def search_and_update_state(query):
+                choices, results = search_huggingface_models(query)
+                return choices, results, choices  # Also update state with new choices
+
             search_btn.click(
-                fn=search_huggingface_models,
+                fn=search_and_update_state,
                 inputs=search_query,
-                outputs=[model_checkboxes, search_results]
+                outputs=[model_checkboxes, search_results, current_choices_state]
             )
 
-            # Connect model checkboxes to automatically fill the model_id field
+            # Connect model checkboxes to automatically fill the model_id field AND update counter
             model_checkboxes.change(
                 fn=process_checkbox_selection,
                 inputs=model_checkboxes,
                 outputs=comp_model_id
+            )
+
+            # Update model counter when checkboxes change
+            model_checkboxes.change(
+                fn=update_model_count,
+                inputs=model_checkboxes,
+                outputs=selected_model_count
+            )
+
+            # Connect Select All button - uses state to get all available choices
+            select_all_btn.click(
+                fn=lambda choices: choices,  # Return all choices from state
+                inputs=current_choices_state,
+                outputs=model_checkboxes
+            )
+
+            # Connect Deselect All button
+            deselect_all_btn.click(
+                fn=deselect_all_models,
+                outputs=model_checkboxes
             )
 
             # Connect compression button
