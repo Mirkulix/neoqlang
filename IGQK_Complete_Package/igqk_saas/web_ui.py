@@ -42,21 +42,149 @@ NOTIFICATIONS = [
     {"time": "1 day ago", "type": "success", "message": "✅ Batch compression completed: 5 models processed"},
 ]
 
-# Theme Settings
+# Theme Settings - Comprehensive Dark Mode CSS
 DARK_MODE_CSS = """
-<style>
-.dark-mode {
-    background-color: #1a1a1a !important;
-    color: #e0e0e0 !important;
+<style id="dark-mode-styles">
+/* Dark Mode Styles */
+body.dark-mode {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
 }
+
 .dark-mode .gradio-container {
-    background-color: #1a1a1a !important;
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%) !important;
 }
-.dark-mode button {
-    background-color: #2d2d2d !important;
-    color: #e0e0e0 !important;
+
+.dark-mode .gr-box {
+    background-color: #161b22 !important;
+    border-color: #30363d !important;
+}
+
+.dark-mode .gr-input, .dark-mode .gr-textarea {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+.dark-mode .gr-button {
+    background-color: #21262d !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+.dark-mode .gr-button-primary {
+    background-color: #238636 !important;
+    color: #ffffff !important;
+}
+
+.dark-mode .gr-button-secondary {
+    background-color: #1f6feb !important;
+    color: #ffffff !important;
+}
+
+.dark-mode .gr-form {
+    background-color: #0d1117 !important;
+}
+
+.dark-mode .gr-panel {
+    background-color: #161b22 !important;
+    border-color: #30363d !important;
+}
+
+.dark-mode .markdown-body {
+    background-color: transparent !important;
+    color: #c9d1d9 !important;
+}
+
+.dark-mode h1, .dark-mode h2, .dark-mode h3, .dark-mode h4 {
+    color: #58a6ff !important;
+}
+
+.dark-mode table {
+    border-color: #30363d !important;
+}
+
+.dark-mode th {
+    background-color: #161b22 !important;
+    color: #58a6ff !important;
+}
+
+.dark-mode td {
+    border-color: #30363d !important;
+}
+
+.dark-mode code {
+    background-color: #161b22 !important;
+    color: #79c0ff !important;
+}
+
+/* Theme Toggle Button Styles */
+#theme-toggle-btn {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    transition: all 0.3s ease;
+}
+
+#theme-toggle-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+/* Smooth transitions */
+body, .gradio-container, .gr-box, .gr-button, .gr-input {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
 </style>
+
+<script>
+// Dark Mode Toggle Functionality
+function initDarkMode() {
+    // Check saved preference or default to light mode
+    const savedTheme = localStorage.getItem('igqk-theme') || 'light';
+
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        updateToggleButton(true);
+    }
+
+    // Add toggle button
+    const toggleBtn = document.createElement('button');
+    toggleBtn.id = 'theme-toggle-btn';
+    toggleBtn.innerHTML = savedTheme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
+    toggleBtn.onclick = toggleTheme;
+    document.body.appendChild(toggleBtn);
+}
+
+function toggleTheme() {
+    const isDark = document.body.classList.toggle('dark-mode');
+    localStorage.setItem('igqk-theme', isDark ? 'dark' : 'light');
+    updateToggleButton(isDark);
+}
+
+function updateToggleButton(isDark) {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) {
+        btn.innerHTML = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+    }
+}
+
+// Initialize on load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDarkMode);
+} else {
+    initDarkMode();
+}
+</script>
 """
 
 
@@ -1189,8 +1317,19 @@ def show_compression_results():
 
 with gr.Blocks(
     title="IGQK v3.0 SaaS Platform",
-    theme=gr.themes.Soft()
+    theme=gr.themes.Soft(),
+    css="""
+    #theme-toggle-btn {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+    }
+    """
 ) as demo:
+
+    # Inject Dark Mode CSS and JavaScript
+    gr.HTML(DARK_MODE_CSS)
 
     gr.Markdown("""
     # 🚀 IGQK v3.0 - All-in-One ML Platform

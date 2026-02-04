@@ -71,15 +71,18 @@ class Database:
                 )
             """)
 
-            # Users table (for future)
+            # Users table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
-                    email TEXT UNIQUE,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    full_name TEXT NOT NULL,
                     api_key TEXT UNIQUE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     quota_jobs_remaining INTEGER DEFAULT 10,
-                    tier TEXT DEFAULT 'free'
+                    tier TEXT DEFAULT 'free',
+                    is_active BOOLEAN DEFAULT 1
                 )
             """)
 
@@ -352,6 +355,76 @@ class Database:
                 "storage_saved_mb": 0.0,
                 "storage_saved_gb": 0.0
             }
+
+    # ==================== USERS ====================
+
+    def create_user(
+        self,
+        user_id: str,
+        email: str,
+        password_hash: str,
+        full_name: str,
+        api_key: str = None,
+        tier: str = "free"
+    ) -> bool:
+        """Create a new user"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO users (
+                        user_id, email, password_hash, full_name, api_key, tier
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (user_id, email, password_hash, full_name, api_key, tier))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error creating user: {str(e)}")
+            return False
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get user by email"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+                return None
+        except Exception as e:
+            print(f"Error getting user: {str(e)}")
+            return None
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by ID"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+                return None
+        except Exception as e:
+            print(f"Error getting user: {str(e)}")
+            return None
+
+    def update_user_quota(self, user_id: str, quota_remaining: int) -> bool:
+        """Update user quota"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE users
+                    SET quota_jobs_remaining = ?
+                    WHERE user_id = ?
+                """, (quota_remaining, user_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error updating user quota: {str(e)}")
+            return False
 
 
 # Global database instance
