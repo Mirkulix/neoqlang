@@ -46,15 +46,15 @@ def search_huggingface_models(query: str):
         if not models:
             return [], f"❌ No models found for query: '{query}'\n\nTry searching for:\n- bert\n- gpt2\n- distilbert\n- t5"
 
-        # Create choices for dropdown (model_id as value)
+        # Create choices for checkbox group (model_id with downloads)
         choices = [
-            (f"{model['id']} ({model['downloads']:,} downloads)" if model.get('downloads') else model['id'], model['id'])
+            f"{model['id']} ({model['downloads']:,} downloads)" if model.get('downloads') else model['id']
             for model in models
         ]
 
         # Format results message
         result = f"# ✅ Found {len(models)} models for '{query}'\n\n"
-        result += "**Select a model from the dropdown below to compress it!**\n\n"
+        result += "**Check the boxes below to select which models to compress!**\n\n"
 
         for i, model in enumerate(models[:10], 1):
             model_id = model["id"]
@@ -68,7 +68,7 @@ def search_huggingface_models(query: str):
 
             result += "\n"
 
-        result += "\n✨ **Models loaded into dropdown! Select one and click 'Start Compression'!**\n"
+        result += "\n✨ **Models loaded! Check the boxes to select, then click 'Start Compression'!**\n"
 
         return choices, result
 
@@ -85,6 +85,26 @@ Popular models you can try:
 - `t5-small`
 - `roberta-base`
 """
+
+
+def process_checkbox_selection(selected_models):
+    """
+    Extract model ID from checkbox selection
+    Format: "model-name (123,456 downloads)" -> "model-name"
+    """
+    if not selected_models or len(selected_models) == 0:
+        return "bert-base-uncased"  # Default fallback
+
+    # Take first selected model
+    first_model = selected_models[0]
+
+    # Extract model ID (remove download count if present)
+    if " (" in first_model:
+        model_id = first_model.split(" (")[0]
+    else:
+        model_id = first_model
+
+    return model_id
 
 
 # ============================================================================
@@ -565,13 +585,12 @@ with gr.Blocks(
                 label="Search Results"
             )
 
-            # Dropdown for model selection (populated by search)
-            model_dropdown = gr.Dropdown(
-                label="📌 Select Model from Search Results",
-                choices=[("bert-base-uncased", "bert-base-uncased")],
-                value="bert-base-uncased",
-                interactive=True,
-                allow_custom_value=True
+            # CheckboxGroup for model selection (populated by search)
+            model_checkboxes = gr.CheckboxGroup(
+                label="☑️ Select Models from Search Results",
+                choices=["bert-base-uncased"],
+                value=[],
+                interactive=True
             )
 
             gr.Markdown("### ⚙️ Step 2: Configure Compression")
@@ -631,17 +650,17 @@ with gr.Blocks(
                         placeholder="Click 'Start Compression' to begin..."
                     )
 
-            # Connect search button - updates both dropdown and results
+            # Connect search button - updates both checkboxes and results
             search_btn.click(
                 fn=search_huggingface_models,
                 inputs=search_query,
-                outputs=[model_dropdown, search_results]
+                outputs=[model_checkboxes, search_results]
             )
 
-            # Connect model dropdown to automatically fill the model_id field
-            model_dropdown.change(
-                fn=lambda x: x,  # Simply pass the selected value through
-                inputs=model_dropdown,
+            # Connect model checkboxes to automatically fill the model_id field
+            model_checkboxes.change(
+                fn=process_checkbox_selection,
+                inputs=model_checkboxes,
                 outputs=comp_model_id
             )
 
