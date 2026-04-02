@@ -22,3 +22,4 @@ pub mod selfhost;
 pub mod lsp;
 pub mod onnx;
 pub mod api;
+pub mod modules;
