@@ -748,7 +748,7 @@ impl VmState {
         Err(VmError::UndefinedVariable(name.to_string()))
     }
 
-    fn set_var(&mut self, name: &str, value: Value) {
+    pub fn set_var(&mut self, name: &str, value: Value) {
         // Set in the innermost scope that already has it, or the current scope
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {
@@ -762,17 +762,17 @@ impl VmState {
         }
     }
 
-    fn declare_var(&mut self, name: &str, value: Value) {
+    pub fn declare_var(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
     }
 
-    fn push_scope(&mut self) {
+    pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
 
-    fn pop_scope(&mut self) {
+    pub fn pop_scope(&mut self) {
         self.scopes.pop();
     }
 
@@ -878,7 +878,7 @@ impl VmState {
         }
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> Result<Value, VmError> {
+    pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, VmError> {
         match expr {
             Expr::NumberLit(n) => Ok(Value::Number(*n)),
             Expr::BoolLit(b) => Ok(Value::Bool(*b)),
