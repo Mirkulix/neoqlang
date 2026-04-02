@@ -47,3 +47,6 @@ logs/
 *.tmp
 *.bak
 nul
+
+# Claude worktrees
+.claude/worktrees/
