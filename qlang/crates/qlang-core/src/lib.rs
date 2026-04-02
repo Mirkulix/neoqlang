@@ -7,8 +7,9 @@
 //! - Constraint, Proof (verification primitives)
 
 pub mod graph;
-pub mod tensor;
-pub mod quantum;
 pub mod ops;
-pub mod verify;
+pub mod quantum;
 pub mod serial;
+pub mod stats;
+pub mod tensor;
+pub mod verify;

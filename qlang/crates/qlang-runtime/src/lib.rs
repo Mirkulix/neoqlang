@@ -13,5 +13,6 @@ pub mod checkpoint;
 pub mod executor;
 pub mod mnist;
 pub mod profiler;
+pub mod scheduler;
 pub mod training;
 pub mod transformer;
