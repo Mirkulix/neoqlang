@@ -150,13 +150,20 @@ fn cmd_verify(graph: &qlang_core::graph::Graph) {
 
 fn cmd_optimize(mut graph: qlang_core::graph::Graph, output: Option<&str>) {
     let before = graph.nodes.len();
-    qlang_compile::optimize::optimize(&mut graph);
+    let report = qlang_compile::optimize::optimize(&mut graph);
     let after = graph.nodes.len();
 
     println!("Optimization complete:");
     println!("  Nodes before: {before}");
     println!("  Nodes after:  {after}");
-    println!("  Removed:      {}", before - after);
+    println!("  Dead nodes removed:  {}", report.dead_nodes_removed);
+    println!("  Constants folded:    {}", report.constants_folded);
+    println!("  Identity ops removed:{}", report.identity_ops_removed);
+    println!("  CSE eliminated:      {}", report.common_subexpressions_eliminated);
+    println!("  Ops fused:           {}", report.ops_fused);
+    for desc in &report.fused_descriptions {
+        println!("    {desc}");
+    }
 
     if let Some(path) = output {
         let json = qlang_core::serial::to_json(&graph).unwrap();
