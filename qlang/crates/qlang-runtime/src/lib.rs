@@ -9,3 +9,4 @@
 //! Phase 2 will add LLVM JIT compilation.
 
 pub mod executor;
+pub mod training;

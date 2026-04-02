@@ -1,0 +1,12 @@
+// First QLANG program in text syntax
+// This is a human-readable VIEW — the graph is the truth.
+
+graph hello_world {
+  input x: f32[4]
+  input y: f32[4]
+
+  node sum = add(x, y)
+  node activated = relu(sum)
+
+  output result = activated
+}

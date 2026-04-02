@@ -26,7 +26,13 @@ fn main() {
     let command = &args[1];
     let file_path = &args[2];
 
-    // Read the graph file
+    // Handle parse command separately (reads .qlang text, not JSON)
+    if command == "parse" {
+        cmd_parse(file_path);
+        return;
+    }
+
+    // Read the graph file (JSON format)
     let content = match fs::read_to_string(file_path) {
         Ok(c) => c,
         Err(e) => {
@@ -76,6 +82,7 @@ fn print_usage() {
     eprintln!("  qlang-cli optimize <file.qlg.json> -o <output.json>   Optimize graph");
     eprintln!("  qlang-cli run      <file.qlg.json>                    Execute (interpreter)");
     eprintln!("  qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)");
+    eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
@@ -233,6 +240,41 @@ fn cmd_llvm_ir(graph: &qlang_core::graph::Graph) {
         }
         Err(e) => {
             eprintln!("Codegen failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_parse(file_path: &str) {
+    let content = match fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error reading {file_path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    match qlang_compile::parser::parse(&content) {
+        Ok(graph) => {
+            println!("Parsed successfully!\n");
+            println!("{graph}");
+
+            // Verify
+            let result = qlang_core::verify::verify_graph(&graph);
+            println!("{result}");
+
+            // Show as JSON
+            if let Ok(json) = qlang_core::serial::to_json(&graph) {
+                println!("JSON output ({} bytes):", json.len());
+                if json.len() <= 2000 {
+                    println!("{json}");
+                } else {
+                    println!("{}...", &json[..2000]);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Parse error: {e}");
             process::exit(1);
         }
     }
