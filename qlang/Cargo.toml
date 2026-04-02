@@ -46,3 +46,11 @@ path = "examples/neural_network.rs"
 [[example]]
 name = "jit_compile"
 path = "examples/jit_compile.rs"
+
+[[example]]
+name = "benchmark"
+path = "examples/benchmark.rs"
+
+[[example]]
+name = "quantum_training"
+path = "examples/quantum_training.rs"

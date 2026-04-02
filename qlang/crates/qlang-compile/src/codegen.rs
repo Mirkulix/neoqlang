@@ -174,7 +174,7 @@ pub fn compile_graph<'ctx>(
 }
 
 /// Emit LLVM IR for a chain of operations.
-fn emit_ops<'ctx>(
+pub fn emit_ops<'ctx>(
     builder: &Builder<'ctx>,
     context: &'ctx Context,
     ops: &[&Op],

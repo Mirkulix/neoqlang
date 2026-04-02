@@ -9,4 +9,5 @@
 
 pub mod codegen;
 pub mod optimize;
+pub mod simd;
 pub mod visualize;
