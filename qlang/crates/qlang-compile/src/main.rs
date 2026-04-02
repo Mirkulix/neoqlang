@@ -78,6 +78,20 @@ fn main() {
             cmd_compile(&graph, output);
         }
         "asm" => cmd_asm(&graph),
+        "wasm" => {
+            println!("{}", qlang_compile::wasm::to_wat(&graph));
+        }
+        "gpu" => {
+            println!("{}", qlang_compile::gpu::to_wgsl(&graph));
+        }
+        "stats" => {
+            let stats = qlang_core::stats::compute_stats(&graph);
+            println!("{stats}");
+        }
+        "schedule" => {
+            let plan = qlang_runtime::scheduler::schedule(&graph);
+            println!("{}", plan.report());
+        }
         _ => {
             eprintln!("Unknown command: {command}");
             print_usage();
