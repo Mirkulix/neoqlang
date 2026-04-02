@@ -28,3 +28,4 @@ pub mod fisher;
 pub mod quantum_flow;
 pub mod theorems;
 pub mod igqk;
+pub mod config;

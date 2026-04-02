@@ -6,6 +6,7 @@
 //! - QuantumState / DensityMatrix (probabilistic values)
 //! - Constraint, Proof (verification primitives)
 
+pub mod errors;
 pub mod graph;
 pub mod ops;
 pub mod quantum;
