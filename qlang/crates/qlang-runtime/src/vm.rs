@@ -709,28 +709,29 @@ pub fn parse_program(tokens: &[Token]) -> Result<Vec<Stmt>, VmError> {
 // ─── VM State ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-struct FnDef {
-    params: Vec<String>,
-    body: Vec<Stmt>,
+pub struct FnDef {
+    pub params: Vec<String>,
+    pub body: Vec<Stmt>,
 }
 
 /// Signal used to propagate return values up the call stack.
-enum ExecSignal {
+pub enum ExecSignal {
     None,
     Return(Value),
 }
 
+#[derive(Clone)]
 pub struct VmState {
     /// Stack of variable scopes (innermost last).
-    scopes: Vec<HashMap<String, Value>>,
+    pub scopes: Vec<HashMap<String, Value>>,
     /// User-defined functions.
-    functions: HashMap<String, FnDef>,
+    pub functions: HashMap<String, FnDef>,
     /// Captured print output (for testing).
     pub output: Vec<String>,
 }
 
 impl VmState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
@@ -738,7 +739,7 @@ impl VmState {
         }
     }
 
-    fn get_var(&self, name: &str) -> Result<Value, VmError> {
+    pub fn get_var(&self, name: &str) -> Result<Value, VmError> {
         for scope in self.scopes.iter().rev() {
             if let Some(val) = scope.get(name) {
                 return Ok(val.clone());
@@ -775,7 +776,7 @@ impl VmState {
         self.scopes.pop();
     }
 
-    fn exec_stmts(&mut self, stmts: &[Stmt]) -> Result<ExecSignal, VmError> {
+    pub fn exec_stmts(&mut self, stmts: &[Stmt]) -> Result<ExecSignal, VmError> {
         for stmt in stmts {
             match self.exec_stmt(stmt)? {
                 ExecSignal::Return(v) => return Ok(ExecSignal::Return(v)),
@@ -785,7 +786,7 @@ impl VmState {
         Ok(ExecSignal::None)
     }
 
-    fn exec_stmt(&mut self, stmt: &Stmt) -> Result<ExecSignal, VmError> {
+    pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<ExecSignal, VmError> {
         match stmt {
             Stmt::Let { name, value } => {
                 let val = self.eval_expr(value)?;

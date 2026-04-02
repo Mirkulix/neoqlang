@@ -16,3 +16,4 @@ pub mod tensor;
 pub mod shape_inference;
 pub mod type_check;
 pub mod verify;
+pub mod ffi;
