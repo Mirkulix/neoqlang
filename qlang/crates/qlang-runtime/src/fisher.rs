@@ -100,23 +100,21 @@ pub fn empirical_fisher(
         // gradient as ∂ log p / ∂ θ_i = (1/p) * ∂p/∂θ_i.
         let output = forward_fn(weights, input);
 
-        // Aggregate across output dimensions: for the Fisher metric we sum
-        // the outer products of log-prob gradients over output dimensions.
-        // grad_log_p[i] = Σ_k (1/p_k) * ∂p_k/∂θ_i
-        let mut grad_log_p = vec![0.0f64; n];
-        for i in 0..n {
-            let mut val = 0.0f64;
-            for k in 0..output.len() {
-                let p = output[k].max(1e-10) as f64; // avoid division by zero
-                val += (grads[i][k] as f64) / p;
-            }
-            grad_log_p[i] = val;
-        }
+        // For each output dimension k, compute ∂ log p_k / ∂ θ_i and
+        // accumulate the outer product. This keeps contributions from
+        // independent output dimensions separate.
+        for k in 0..output.len() {
+            let p = output[k].max(1e-10) as f64;
+            // grad_log_p_k[i] = (1/p_k) * ∂p_k/∂θ_i
+            let grad_log_p_k: Vec<f64> = (0..n)
+                .map(|i| (grads[i][k] as f64) / p)
+                .collect();
 
-        // Accumulate outer product: G += grad_log_p * grad_log_p^T
-        for i in 0..n {
-            for j in 0..n {
-                fisher[i * n + j] += grad_log_p[i] * grad_log_p[j];
+            // Accumulate outer product: G += grad_log_p_k * grad_log_p_k^T
+            for i in 0..n {
+                for j in 0..n {
+                    fisher[i * n + j] += grad_log_p_k[i] * grad_log_p_k[j];
+                }
             }
         }
     }

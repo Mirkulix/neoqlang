@@ -25,3 +25,5 @@ pub mod stdlib;
 pub mod vm;
 pub mod linalg;
 pub mod fisher;
+pub mod quantum_flow;
+pub mod theorems;

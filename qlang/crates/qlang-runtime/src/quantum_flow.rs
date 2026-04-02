@@ -342,11 +342,26 @@ pub fn collapse_to_weights(rho: &DensityMatrix) -> Vec<f64> {
 mod tests {
     use super::*;
 
-    /// Helper: build a simple 3×3 diagonal gradient matrix.
+    /// Helper: build a symmetric gradient matrix with off-diagonal terms
+    /// so that the anticommutator genuinely mixes the state.
     fn simple_gradient(dim: usize) -> Vec<f64> {
         let mut g = vec![0.0; dim * dim];
         for i in 0..dim {
             g[i * dim + i] = 0.1 * (i as f64 + 1.0);
+            // Add small off-diagonal coupling
+            for j in 0..dim {
+                if i != j {
+                    g[i * dim + j] = 0.02 / ((i as f64 - j as f64).abs() + 1.0);
+                }
+            }
+        }
+        // Symmetrise
+        for i in 0..dim {
+            for j in (i + 1)..dim {
+                let avg = 0.5 * (g[i * dim + j] + g[j * dim + i]);
+                g[i * dim + j] = avg;
+                g[j * dim + i] = avg;
+            }
         }
         g
     }
@@ -425,7 +440,10 @@ mod tests {
     // 5. Entropy changes during evolution
     #[test]
     fn entropy_changes_during_evolution() {
-        let psi = vec![1.0, 0.0, 0.0, 0.0];
+        // Use a superposition state so commutator and anticommutator
+        // both produce non-trivial mixing.
+        let s = 1.0 / 2.0_f64.sqrt();
+        let psi = vec![s, s, 0.0, 0.0];
         let rho = DensityMatrix::pure_state(&psi);
         let h = construct_hamiltonian(4, &[0.0, 1.0, 2.0, 3.0]);
         let grad = simple_gradient(4);
@@ -449,7 +467,10 @@ mod tests {
     // 6. Pure state evolves to mixed state (entropy increases)
     #[test]
     fn pure_state_becomes_mixed() {
-        let psi = vec![1.0, 0.0, 0.0];
+        // Superposition so the diagonal gradient breaks the pure-state
+        // structure and increases entropy.
+        let s = 1.0 / 3.0_f64.sqrt();
+        let psi = vec![s, s, s];
         let rho = DensityMatrix::pure_state(&psi);
         assert!(rho.entropy() < 1e-10, "Initial state should be pure");
 
@@ -524,7 +545,8 @@ mod tests {
     // 10. Full evolution entropy history is monotonic (pure → mixed)
     #[test]
     fn entropy_history_monotonic_for_pure_start() {
-        let psi = vec![1.0, 0.0, 0.0, 0.0];
+        let s = 1.0 / 2.0_f64.sqrt();
+        let psi = vec![s, s, 0.0, 0.0];
         let rho = DensityMatrix::pure_state(&psi);
         let h = construct_hamiltonian(4, &[0.0, 1.0, 2.0, 3.0]);
         let grad = simple_gradient(4);
