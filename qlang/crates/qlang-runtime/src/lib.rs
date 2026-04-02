@@ -12,5 +12,6 @@ pub mod autograd;
 pub mod checkpoint;
 pub mod executor;
 pub mod mnist;
+pub mod profiler;
 pub mod training;
 pub mod transformer;

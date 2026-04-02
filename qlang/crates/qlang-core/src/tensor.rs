@@ -156,7 +156,7 @@ impl fmt::Display for TensorType {
 }
 
 /// Concrete tensor data — the actual values in memory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TensorData {
     pub dtype: Dtype,
     pub shape: Shape,
