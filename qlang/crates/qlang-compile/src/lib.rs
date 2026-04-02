@@ -7,6 +7,8 @@
 //! The compiled code runs at the same speed as hand-written C/Rust —
 //! because it IS the same LLVM backend that C and Rust use.
 
+pub mod aligned;
+pub mod aot;
 pub mod codegen;
 pub mod optimize;
 pub mod simd;

@@ -55,6 +55,11 @@ fn main() {
         "dot" => cmd_dot(&graph),
         "ascii" => cmd_ascii(&graph),
         "llvm-ir" => cmd_llvm_ir(&graph),
+        "compile" => {
+            let output = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/qlang_out.o");
+            cmd_compile(&graph, output);
+        }
+        "asm" => cmd_asm(&graph),
         _ => {
             eprintln!("Unknown command: {command}");
             print_usage();
@@ -64,13 +69,15 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("QLANG CLI v0.2 — Graph-based AI-to-AI programming language\n");
+    eprintln!("QLANG CLI v0.3 — Graph-based AI-to-AI programming language\n");
     eprintln!("Usage:");
     eprintln!("  qlang-cli info     <file.qlg.json>                    Show graph info");
     eprintln!("  qlang-cli verify   <file.qlg.json>                    Verify constraints");
     eprintln!("  qlang-cli optimize <file.qlg.json> -o <output.json>   Optimize graph");
     eprintln!("  qlang-cli run      <file.qlg.json>                    Execute (interpreter)");
     eprintln!("  qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)");
+    eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
+    eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
     eprintln!("  qlang-cli ascii    <file.qlg.json>                    ASCII visualization");
     eprintln!("  qlang-cli llvm-ir  <file.qlg.json>                    Show LLVM IR output");
@@ -226,6 +233,42 @@ fn cmd_llvm_ir(graph: &qlang_core::graph::Graph) {
         }
         Err(e) => {
             eprintln!("Codegen failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_compile(graph: &qlang_core::graph::Graph, output: &str) {
+    use inkwell::OptimizationLevel;
+
+    println!("Compiling graph '{}' to native object file...", graph.id);
+
+    match qlang_compile::aot::compile_to_object(graph, output, OptimizationLevel::Aggressive) {
+        Ok(result) => {
+            println!("  Target:      {}", result.target_triple);
+            println!("  CPU:         {}", result.cpu);
+            println!("  Object file: {}", result.object_path);
+            println!("  File size:   {} bytes", result.file_size);
+            println!("\n  Link with: cc -o program {} -lm", result.object_path);
+            println!("  Function:  void qlang_graph(float*, float*, float*, uint64_t)");
+        }
+        Err(e) => {
+            eprintln!("Compilation failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_asm(graph: &qlang_core::graph::Graph) {
+    use inkwell::OptimizationLevel;
+
+    match qlang_compile::aot::compile_to_object(graph, "/tmp/qlang_asm_tmp.o", OptimizationLevel::Aggressive) {
+        Ok(result) => {
+            println!("{}", result.assembly);
+            let _ = std::fs::remove_file("/tmp/qlang_asm_tmp.o");
+        }
+        Err(e) => {
+            eprintln!("Compilation failed: {e}");
             process::exit(1);
         }
     }

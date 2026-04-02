@@ -15,7 +15,11 @@ fn main() {
     use inkwell::OptimizationLevel;
     use qlang_core::tensor::{Dtype, Shape, TensorType as TT};
 
-    let sizes = [1024, 4096, 16384, 65536, 262144];
+    let sizes = [1024, 4096, 16384, 65536, 262144, 1048576];
+    let n_warmup = 3;
+    let n_runs = 10;
+
+    println!("Warming up JIT compiler...\n");
 
     println!("{:>10} {:>14} {:>14} {:>14} {:>10} {:>10}",
         "Elements", "Interpreter", "JIT Scalar", "JIT SIMD", "JIT/Int", "SIMD/Int");
@@ -32,36 +36,50 @@ fn main() {
         let graph = e.build();
 
         let input_a: Vec<f32> = (0..n).map(|i| (i as f32 * 0.01) - (n as f32 * 0.005)).collect();
-        let input_b: Vec<f32> = (0..n).map(|i| (i as f32 * 0.005)).collect();
+        let input_b: Vec<f32> = (0..n).map(|i| i as f32 * 0.005).collect();
 
-        // === Interpreter ===
-        let mut inputs = std::collections::HashMap::new();
-        inputs.insert("a".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_a));
-        inputs.insert("b".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_b));
-
-        let start = Instant::now();
-        let _interp = qlang_runtime::executor::execute(&graph, inputs).unwrap();
-        let interp_time = start.elapsed();
-
-        // === JIT Scalar ===
+        // === Compile ONCE (not measured) ===
         let context = Context::create();
         let compiled = qlang_compile::codegen::compile_graph(&context, &graph, OptimizationLevel::Aggressive).unwrap();
-
-        let start = Instant::now();
-        let _jit_result = qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b).unwrap();
-        let jit_time = start.elapsed();
-
-        // === JIT SIMD ===
         let simd_compiled = qlang_compile::simd::compile_graph_simd(&context, &graph).unwrap();
 
-        let start = Instant::now();
-        let _simd_result = qlang_compile::codegen::execute_compiled(&simd_compiled, &input_a, &input_b).unwrap();
-        let simd_time = start.elapsed();
+        // === Warmup ===
+        for _ in 0..n_warmup {
+            let _ = qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b);
+            let _ = qlang_compile::aligned::execute_aligned(&simd_compiled, &input_a, &input_b);
+        }
 
-        let jit_speedup = interp_time.as_nanos() as f64 / jit_time.as_nanos().max(1) as f64;
-        let simd_speedup = interp_time.as_nanos() as f64 / simd_time.as_nanos().max(1) as f64;
+        // === Interpreter (best of n_runs) ===
+        let mut best_interp = std::time::Duration::from_secs(999);
+        for _ in 0..n_runs {
+            let mut inputs = std::collections::HashMap::new();
+            inputs.insert("a".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_a));
+            inputs.insert("b".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_b));
+            let start = Instant::now();
+            let _ = qlang_runtime::executor::execute(&graph, inputs).unwrap();
+            best_interp = best_interp.min(start.elapsed());
+        }
 
-        println!("{n:>10} {interp_time:>14.2?} {jit_time:>14.2?} {simd_time:>14.2?} {jit_speedup:>9.1}x {simd_speedup:>9.1}x");
+        // === JIT Scalar (best of n_runs) ===
+        let mut best_jit = std::time::Duration::from_secs(999);
+        for _ in 0..n_runs {
+            let start = Instant::now();
+            let _ = qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b).unwrap();
+            best_jit = best_jit.min(start.elapsed());
+        }
+
+        // === JIT SIMD (best of n_runs, aligned memory) ===
+        let mut best_simd = std::time::Duration::from_secs(999);
+        for _ in 0..n_runs {
+            let start = Instant::now();
+            let _ = qlang_compile::aligned::execute_aligned(&simd_compiled, &input_a, &input_b).unwrap();
+            best_simd = best_simd.min(start.elapsed());
+        }
+
+        let jit_speedup = best_interp.as_nanos() as f64 / best_jit.as_nanos().max(1) as f64;
+        let simd_speedup = best_interp.as_nanos() as f64 / best_simd.as_nanos().max(1) as f64;
+
+        println!("{n:>10} {best_interp:>14.2?} {best_jit:>14.2?} {best_simd:>14.2?} {jit_speedup:>9.1}x {simd_speedup:>9.1}x");
     }
 
     println!("\n=== Legend ===");
