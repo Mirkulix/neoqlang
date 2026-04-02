@@ -13,6 +13,7 @@ pub mod codegen;
 pub mod gpu;
 pub mod parser;
 pub mod repl;
+pub mod wasm;
 pub mod optimize;
 pub mod simd;
 pub mod visualize;

@@ -9,6 +9,7 @@
 //! Phase 2 will add LLVM JIT compilation.
 
 pub mod autograd;
+pub mod checkpoint;
 pub mod executor;
 pub mod mnist;
 pub mod training;

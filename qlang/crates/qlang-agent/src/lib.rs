@@ -16,6 +16,7 @@
 
 pub mod compose;
 pub mod diff;
+pub mod distributed;
 pub mod emitter;
 pub mod packages;
 pub mod protocol;

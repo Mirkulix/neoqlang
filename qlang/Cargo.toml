@@ -70,3 +70,7 @@ path = "examples/train_mnist.rs"
 [[example]]
 name = "transformer"
 path = "examples/transformer.rs"
+
+[[example]]
+name = "full_pipeline"
+path = "examples/full_pipeline.rs"
