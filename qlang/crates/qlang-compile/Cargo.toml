@@ -6,4 +6,9 @@ description = "QLANG graph compiler - Graph to machine code via LLVM"
 
 [dependencies]
 qlang-core = { workspace = true }
+qlang-runtime = { workspace = true }
 thiserror = { workspace = true }
+
+[[bin]]
+name = "qlang-cli"
+path = "src/main.rs"

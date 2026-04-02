@@ -36,3 +36,7 @@ qlang-agent = { workspace = true }
 [[example]]
 name = "hello_qlang"
 path = "examples/hello_qlang.rs"
+
+[[example]]
+name = "neural_network"
+path = "examples/neural_network.rs"

@@ -132,9 +132,70 @@ pub fn execute(
                 node_outputs.insert((node_id, 0), result);
             }
 
+            Op::Sub => {
+                let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let result = tensor_binop(&a, &b, |x, y| x - y, "sub")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += a.shape.numel().unwrap_or(0) as u64;
+            }
+
+            Op::Div => {
+                let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let result = tensor_binop(&a, &b, |x, y| x / y, "div")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += a.shape.numel().unwrap_or(0) as u64;
+            }
+
             Op::Neg => {
                 let input = get_one_input(graph, node_id, &node_outputs)?;
                 let result = tensor_neg(&input)?;
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::Sigmoid => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_unaryop(&input, |x| 1.0 / (1.0 + (-x).exp()), "sigmoid")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 4;
+            }
+
+            Op::Tanh => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_unaryop(&input, |x| x.tanh(), "tanh")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 4;
+            }
+
+            Op::Softmax { axis } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_softmax(&input, *axis)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 5;
+            }
+
+            Op::Transpose => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_transpose(&input)?;
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::ReduceSum { axis } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_reduce(&input, *axis, |acc, x| acc + x, 0.0, "sum")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64;
+            }
+
+            Op::ReduceMean { axis } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_reduce_mean(&input, *axis)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64;
+            }
+
+            Op::ReduceMax { axis } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_reduce(&input, *axis, |acc, x| acc.max(x), f32::NEG_INFINITY, "max")?;
                 node_outputs.insert((node_id, 0), result);
             }
 
@@ -142,6 +203,61 @@ pub fn execute(
                 let input = get_one_input(graph, node_id, &node_outputs)?;
                 let result = tensor_to_ternary(&input)?;
                 node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::ToLowRank { rank } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_to_lowrank(&input, *rank)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Entropy => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_entropy(&input)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Superpose => {
+                let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
+                // Superposition: weighted average (equal weights for now)
+                let result = tensor_binop(&a, &b, |x, y| (x + y) / 2.0, "superpose")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Measure => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                // Measurement: collapse distribution to argmax
+                let result = tensor_measure(&input)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Evolve { gamma, dt } => {
+                // Quantum gradient flow: simplified as gradient step
+                // dρ/dt = -i[H, ρ] - γ{G⁻¹∇L, ρ}
+                // Phase 1: approximate as ρ' = ρ - γ·dt·∇L
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 2 {
+                    return Err(ExecutionError::MissingInput(node_id, "evolve needs state and gradient".into()));
+                }
+                let state = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "state".into()))?;
+                let gradient = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
+
+                let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
+                let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: gradient not f32".into()))?;
+                let step = (*gamma * *dt) as f32;
+                let result: Vec<f32> = vs.iter().zip(vg.iter()).map(|(s, g)| s - step * g).collect();
+                node_outputs.insert((node_id, 0), TensorData::from_f32(state.shape.clone(), &result));
                 stats.quantum_ops += 1;
             }
 
@@ -299,6 +415,204 @@ fn tensor_matmul(a: &TensorData, b: &TensorData) -> Result<TensorData, Execution
     }
 
     Ok(TensorData::from_f32(Shape::matrix(m, n), &result))
+}
+
+/// Generic binary operation on two f32 tensors.
+fn tensor_binop(
+    a: &TensorData,
+    b: &TensorData,
+    op: impl Fn(f32, f32) -> f32,
+    name: &str,
+) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        format!("{name}: input a not f32"),
+    ))?;
+    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        format!("{name}: input b not f32"),
+    ))?;
+    if va.len() != vb.len() {
+        return Err(ExecutionError::ShapeMismatch {
+            expected: format!("{}", a.shape),
+            got: format!("{}", b.shape),
+        });
+    }
+    let result: Vec<f32> = va.iter().zip(vb.iter()).map(|(&x, &y)| op(x, y)).collect();
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+/// Generic unary operation on f32 tensor.
+fn tensor_unaryop(
+    a: &TensorData,
+    op: impl Fn(f32) -> f32,
+    name: &str,
+) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        format!("{name}: input not f32"),
+    ))?;
+    let result: Vec<f32> = va.iter().map(|&x| op(x)).collect();
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_softmax(a: &TensorData, _axis: usize) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "softmax: input not f32".into(),
+    ))?;
+    // For Phase 1: flatten softmax (ignoring axis, treating as 1D)
+    let max_val = va.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let exps: Vec<f32> = va.iter().map(|&x| (x - max_val).exp()).collect();
+    let sum: f32 = exps.iter().sum();
+    let result: Vec<f32> = exps.iter().map(|&e| e / sum).collect();
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_transpose(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    use qlang_core::tensor::{Dim, Shape};
+
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "transpose: input not f32".into(),
+    ))?;
+
+    let (m, n) = match a.shape.0.as_slice() {
+        [Dim::Fixed(m), Dim::Fixed(n)] => (*m, *n),
+        _ => return Err(ExecutionError::RuntimeError("transpose: must be 2D".into())),
+    };
+
+    let mut result = vec![0.0f32; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            result[j * m + i] = va[i * n + j];
+        }
+    }
+    Ok(TensorData::from_f32(Shape::matrix(n, m), &result))
+}
+
+fn tensor_reduce(
+    a: &TensorData,
+    axis: Option<usize>,
+    op: impl Fn(f32, f32) -> f32,
+    init: f32,
+    name: &str,
+) -> Result<TensorData, ExecutionError> {
+    use qlang_core::tensor::Shape;
+
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        format!("{name}: input not f32"),
+    ))?;
+
+    match axis {
+        None => {
+            // Reduce all elements to scalar
+            let result = va.iter().fold(init, |acc, &x| op(acc, x));
+            Ok(TensorData::from_f32(Shape::scalar(), &[result]))
+        }
+        Some(_) => {
+            // Phase 1: only support full reduction
+            let result = va.iter().fold(init, |acc, &x| op(acc, x));
+            Ok(TensorData::from_f32(Shape::scalar(), &[result]))
+        }
+    }
+}
+
+fn tensor_reduce_mean(a: &TensorData, axis: Option<usize>) -> Result<TensorData, ExecutionError> {
+    use qlang_core::tensor::Shape;
+
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "reduce_mean: input not f32".into(),
+    ))?;
+
+    match axis {
+        None | Some(_) => {
+            let sum: f32 = va.iter().sum();
+            let mean = sum / va.len() as f32;
+            Ok(TensorData::from_f32(Shape::scalar(), &[mean]))
+        }
+    }
+}
+
+/// Low-rank approximation via truncated SVD (simplified for Phase 1).
+/// Keeps only the top `rank` singular values.
+fn tensor_to_lowrank(a: &TensorData, rank: usize) -> Result<TensorData, ExecutionError> {
+    use qlang_core::tensor::Dim;
+
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "to_lowrank: input not f32".into(),
+    ))?;
+
+    let (m, n) = match a.shape.0.as_slice() {
+        [Dim::Fixed(m), Dim::Fixed(n)] => (*m, *n),
+        _ => return Err(ExecutionError::RuntimeError("to_lowrank: must be 2D".into())),
+    };
+
+    let effective_rank = rank.min(m).min(n);
+
+    // Phase 1: Power iteration approximation for top-k singular values
+    // For production: use full SVD via LAPACK
+    let mut result = vec![0.0f32; m * n];
+
+    // Simple approach: zero out elements below threshold to approximate low-rank
+    // This is a placeholder — real implementation needs SVD
+    let mut values: Vec<f32> = va.iter().map(|x| x.abs()).collect();
+    values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    let threshold = if effective_rank * effective_rank < values.len() {
+        values.get(effective_rank * effective_rank).copied().unwrap_or(0.0)
+    } else {
+        0.0
+    };
+
+    for i in 0..(m * n) {
+        if va[i].abs() >= threshold {
+            result[i] = va[i];
+        }
+    }
+
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+/// Compute Shannon entropy of tensor values treated as probability distribution.
+fn tensor_entropy(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    use qlang_core::tensor::Shape;
+
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "entropy: input not f32".into(),
+    ))?;
+
+    // Normalize to probability distribution
+    let sum: f32 = va.iter().map(|x| x.abs()).sum();
+    if sum < 1e-15 {
+        return Ok(TensorData::from_f32(Shape::scalar(), &[0.0]));
+    }
+
+    let entropy: f32 = va
+        .iter()
+        .map(|&x| {
+            let p = x.abs() / sum;
+            if p > 1e-15 { -p * p.ln() } else { 0.0 }
+        })
+        .sum();
+
+    Ok(TensorData::from_f32(Shape::scalar(), &[entropy]))
+}
+
+/// Quantum measurement: collapse probability distribution to argmax.
+/// Returns a one-hot vector (deterministic approximation of Born rule).
+fn tensor_measure(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "measure: input not f32".into(),
+    ))?;
+
+    let mut max_idx = 0;
+    let mut max_val = f32::NEG_INFINITY;
+    for (i, &v) in va.iter().enumerate() {
+        if v > max_val {
+            max_val = v;
+            max_idx = i;
+        }
+    }
+
+    let mut result = vec![0.0f32; va.len()];
+    result[max_idx] = 1.0;
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
 fn tensor_relu(a: &TensorData) -> Result<TensorData, ExecutionError> {
