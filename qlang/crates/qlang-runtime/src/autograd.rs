@@ -48,7 +48,7 @@ enum TapeEntry {
 
 /// Computation tape for reverse-mode AD.
 pub struct Tape {
-    values: Vec<Value>,
+    pub values: Vec<Value>,
     ops: Vec<TapeEntry>,
 }
 

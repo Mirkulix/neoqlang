@@ -65,6 +65,20 @@ pub enum Op {
     /// Project onto submanifold
     Project { manifold: Manifold },
 
+    // === Transformer Operations ===
+    /// Layer normalization: (x - mean) / sqrt(var + eps) * gamma + beta
+    LayerNorm { eps: f64 },
+    /// Scaled dot-product attention: softmax(Q·K^T / sqrt(d_k)) · V
+    Attention { n_heads: usize, d_model: usize },
+    /// Token/positional embedding lookup
+    Embedding { vocab_size: usize, d_model: usize },
+    /// Residual connection: x + f(x)
+    Residual,
+    /// GELU activation: x * Φ(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
+    Gelu,
+    /// Dropout (identity at inference, masks at training)
+    Dropout { rate: f64 },
+
     // === Control Flow ===
     /// Conditional: evaluates BOTH branches (quantum-style), selects based on predicate
     Cond,
@@ -97,9 +111,12 @@ impl Op {
             | Op::Slice { .. } | Op::ToTernary | Op::ToLowRank { .. }
             | Op::ToSparse { .. } | Op::Entropy | Op::Collapse
             | Op::ReduceSum { .. } | Op::ReduceMean { .. } | Op::ReduceMax { .. }
-            | Op::Project { .. } => 1,
+            | Op::Project { .. } | Op::LayerNorm { .. } | Op::Gelu
+            | Op::Dropout { .. } | Op::Embedding { .. } => 1,
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::MatMul
-            | Op::Concat { .. } | Op::Entangle | Op::FisherMetric => 2,
+            | Op::Concat { .. } | Op::Entangle | Op::FisherMetric
+            | Op::Residual => 2,
+            Op::Attention { .. } => 3, // Q, K, V
             Op::Cond => 3, // predicate, branch_a, branch_b
             Op::Evolve { .. } => 3, // ρ, hamiltonian, gradient
             Op::Measure | Op::Superpose => 2, // state + operators/states
@@ -118,7 +135,7 @@ impl Op {
     /// Whether this operation is deterministic.
     pub fn is_deterministic(&self) -> bool {
         match self {
-            Op::Measure | Op::Collapse | Op::Superpose => false,
+            Op::Measure | Op::Collapse | Op::Superpose | Op::Dropout { .. } => false,
             _ => true,
         }
     }
@@ -168,6 +185,12 @@ impl fmt::Display for Op {
             Op::ToSparse { sparsity } => write!(f, "to_sparse(s={sparsity})"),
             Op::FisherMetric => write!(f, "fisher_metric"),
             Op::Project { manifold } => write!(f, "project({manifold:?})"),
+            Op::LayerNorm { eps } => write!(f, "layer_norm(eps={eps})"),
+            Op::Attention { n_heads, d_model } => write!(f, "attention(heads={n_heads}, d={d_model})"),
+            Op::Embedding { vocab_size, d_model } => write!(f, "embedding(vocab={vocab_size}, d={d_model})"),
+            Op::Residual => write!(f, "residual"),
+            Op::Gelu => write!(f, "gelu"),
+            Op::Dropout { rate } => write!(f, "dropout(rate={rate})"),
             Op::Cond => write!(f, "cond"),
             Op::Scan { n_iterations } => write!(f, "scan(n={n_iterations})"),
             Op::SubGraph { graph_id } => write!(f, "subgraph({graph_id})"),

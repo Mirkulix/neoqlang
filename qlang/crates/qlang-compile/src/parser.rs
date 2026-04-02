@@ -294,6 +294,10 @@ impl<'a> Parser<'a> {
             "entropy" => Ok((Op::Entropy, TensorType::f32_scalar())),
             "evolve" => Ok((Op::Evolve { gamma: 0.01, dt: 0.001 }, first_type)),
             "project_ternary" => Ok((Op::Project { manifold: Manifold::Ternary }, first_type)),
+            "layer_norm" => Ok((Op::LayerNorm { eps: 1e-5 }, first_type)),
+            "gelu" => Ok((Op::Gelu, first_type)),
+            "residual" => Ok((Op::Residual, first_type)),
+            "dropout" => Ok((Op::Dropout { rate: 0.1 }, first_type)),
             _ => Err(ParseError::UnknownOp(name.to_string())),
         }
     }
@@ -393,6 +397,12 @@ pub fn to_qlang_text(graph: &Graph) -> String {
                     Op::Entropy => "entropy",
                     Op::Evolve { .. } => "evolve",
                     Op::Project { .. } => "project_ternary",
+                    Op::LayerNorm { .. } => "layer_norm",
+                    Op::Attention { .. } => "attention",
+                    Op::Embedding { .. } => "embedding",
+                    Op::Residual => "residual",
+                    Op::Gelu => "gelu",
+                    Op::Dropout { .. } => "dropout",
                     other => {
                         out.push_str(&format!("  // unsupported: {other}\n"));
                         names.insert(id, var_name);
