@@ -21,6 +21,10 @@ build/
 .DS_Store
 Thumbs.db
 
+# Rust
+target/
+Cargo.lock
+
 # IGQK specific
 *.db
 *.db-journal
