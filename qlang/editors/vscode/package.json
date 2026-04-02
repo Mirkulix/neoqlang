@@ -1,0 +1,24 @@
+{
+  "name": "qlang",
+  "displayName": "QLANG",
+  "description": "QLANG language support - Graph-based AI-to-AI Programming",
+  "version": "0.1.0",
+  "publisher": "mirkulix",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:qlang"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "qlang",
+      "aliases": ["QLANG"],
+      "extensions": [".qlang"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "qlang",
+      "scopeName": "source.qlang",
+      "path": "./syntaxes/qlang.tmLanguage.json"
+    }]
+  }
+}
