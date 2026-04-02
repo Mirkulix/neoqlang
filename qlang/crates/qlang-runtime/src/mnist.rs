@@ -416,21 +416,26 @@ fn draw_digit(image: &mut [f32], digit: u8, seed: usize) {
             }
         }
         5 => {
-            // Top bar, left vertical (top half), middle bar, right vertical (bottom half), bottom bar
-            for x in 8..20 {
-                set_thick(image, x + ox, 5 + oy, 1.0);
+            // Top bar (wide), left vertical (top half), middle bar, right vertical
+            // (bottom half), bottom curved bar — shifted left relative to 3
+            for x in 6..18 {
+                set_thick(image, x + ox, 4 + oy, 1.0);
             }
-            for y in 5..13 {
-                set_thick(image, 8 + ox, y + oy, 1.0);
+            for y in 4..12 {
+                set_thick(image, 6 + ox, y + oy, 1.0);
             }
-            for x in 8..20 {
-                set_thick(image, x + ox, 13 + oy, 1.0);
+            for x in 6..18 {
+                set_thick(image, x + ox, 12 + oy, 1.0);
             }
-            for y in 13..22 {
-                set_thick(image, 19 + ox, y + oy, 1.0);
+            for y in 12..22 {
+                set_thick(image, 17 + ox, y + oy, 1.0);
             }
-            for x in 8..20 {
-                set_thick(image, x + ox, 21 + oy, 1.0);
+            // Bottom curve
+            for angle in 0..20 {
+                let a = angle as f32 * std::f32::consts::PI / 20.0;
+                let x = 12 + ox + (a.cos() * 5.0) as i32;
+                let y = 22 + oy + (a.sin() * 2.0) as i32;
+                set_thick(image, x, y, 1.0);
             }
         }
         6 => {
