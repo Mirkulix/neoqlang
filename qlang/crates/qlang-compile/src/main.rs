@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::process;
 
 fn main() {
@@ -28,6 +29,11 @@ fn main() {
     // Commands that don't need a file argument
     if command == "repl" {
         qlang_compile::repl::run_repl();
+        return;
+    }
+
+    if command == "lsp" {
+        cmd_lsp();
         return;
     }
 
@@ -142,6 +148,7 @@ fn print_usage() {
     eprintln!("  qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)");
     eprintln!("  qlang-cli repl                                         Interactive REPL");
     eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
+    eprintln!("  qlang-cli lsp                                            Start LSP server (stdin/stdout)");
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
@@ -384,4 +391,190 @@ fn cmd_asm(graph: &qlang_core::graph::Graph) {
             process::exit(1);
         }
     }
+}
+
+/// Simple LSP server using JSON-RPC over stdin/stdout.
+fn cmd_lsp() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let reader = BufReader::new(stdin.lock());
+    let mut lines = reader.lines();
+
+    eprintln!("QLANG LSP server starting on stdin/stdout...");
+
+    let mut documents: HashMap<String, String> = HashMap::new();
+
+    loop {
+        let header = match lines.next() {
+            Some(Ok(h)) => h,
+            _ => break,
+        };
+
+        if !header.starts_with("Content-Length:") {
+            continue;
+        }
+
+        let content_length: usize = header
+            .trim_start_matches("Content-Length:")
+            .trim()
+            .parse()
+            .unwrap_or(0);
+
+        // Skip blank line
+        let _ = lines.next();
+
+        // Read JSON body
+        let mut body = String::new();
+        let mut remaining = content_length;
+        while remaining > 0 {
+            if let Some(Ok(line)) = lines.next() {
+                remaining = remaining.saturating_sub(line.len() + 1);
+                body.push_str(&line);
+                body.push('\n');
+            } else {
+                break;
+            }
+        }
+
+        let msg: serde_json::Value = match serde_json::from_str(body.trim()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let method = msg["method"].as_str().unwrap_or("");
+        let id = &msg["id"];
+
+        match method {
+            "initialize" => {
+                let response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "capabilities": {
+                            "textDocumentSync": 1,
+                            "completionProvider": { "triggerCharacters": [".", "=", "(", ":"] },
+                            "hoverProvider": true,
+                            "definitionProvider": true
+                        },
+                        "serverInfo": { "name": "qlang-lsp", "version": "0.1.0" }
+                    }
+                });
+                send_response(&stdout, &response);
+            }
+            "initialized" => {}
+            "textDocument/didOpen" => {
+                if let (Some(uri), Some(text)) = (
+                    msg["params"]["textDocument"]["uri"].as_str(),
+                    msg["params"]["textDocument"]["text"].as_str(),
+                ) {
+                    documents.insert(uri.to_string(), text.to_string());
+                    publish_diagnostics(&stdout, uri, text);
+                }
+            }
+            "textDocument/didChange" => {
+                if let Some(uri) = msg["params"]["textDocument"]["uri"].as_str() {
+                    if let Some(changes) = msg["params"]["contentChanges"].as_array() {
+                        if let Some(text) = changes.first().and_then(|c| c["text"].as_str()) {
+                            documents.insert(uri.to_string(), text.to_string());
+                            publish_diagnostics(&stdout, uri, text);
+                        }
+                    }
+                }
+            }
+            "textDocument/completion" => {
+                let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
+                let line = msg["params"]["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let col = msg["params"]["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let source = documents.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let items = qlang_compile::lsp::completions_at(source, line, col);
+
+                let lsp_items: Vec<serde_json::Value> = items.iter().map(|item| {
+                    serde_json::json!({
+                        "label": item.label,
+                        "kind": match item.kind {
+                            qlang_compile::lsp::CompletionKind::Operation => 3,
+                            qlang_compile::lsp::CompletionKind::Type => 6,
+                            qlang_compile::lsp::CompletionKind::Variable => 6,
+                            qlang_compile::lsp::CompletionKind::Keyword => 14,
+                        },
+                        "documentation": item.documentation
+                    })
+                }).collect();
+
+                send_response(&stdout, &serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": lsp_items
+                }));
+            }
+            "textDocument/hover" => {
+                let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
+                let line = msg["params"]["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let col = msg["params"]["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let source = documents.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let hover = qlang_compile::lsp::hover_info(source, line, col);
+
+                let result = match hover {
+                    Some(text) => serde_json::json!({ "contents": { "kind": "markdown", "value": text } }),
+                    None => serde_json::Value::Null,
+                };
+                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            }
+            "textDocument/definition" => {
+                let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
+                let line = msg["params"]["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let col = msg["params"]["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let source = documents.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let def = qlang_compile::lsp::goto_definition(source, line, col);
+
+                let result = match def {
+                    Some((dl, dc)) => serde_json::json!({
+                        "uri": uri,
+                        "range": { "start": { "line": dl, "character": dc }, "end": { "line": dl, "character": dc } }
+                    }),
+                    None => serde_json::Value::Null,
+                };
+                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            }
+            "shutdown" => {
+                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null }));
+            }
+            "exit" => break,
+            _ => {}
+        }
+    }
+}
+
+fn send_response(stdout: &std::io::Stdout, msg: &serde_json::Value) {
+    let body = serde_json::to_string(msg).unwrap();
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
+    let mut out = stdout.lock();
+    let _ = out.write_all(header.as_bytes());
+    let _ = out.write_all(body.as_bytes());
+    let _ = out.flush();
+}
+
+fn publish_diagnostics(stdout: &std::io::Stdout, uri: &str, source: &str) {
+    let diags = qlang_compile::lsp::analyze_source(source);
+    let lsp_diags: Vec<serde_json::Value> = diags.iter().map(|d| {
+        serde_json::json!({
+            "range": {
+                "start": { "line": d.line.saturating_sub(1), "character": d.col },
+                "end": { "line": d.line.saturating_sub(1), "character": d.col + 1 }
+            },
+            "severity": match d.severity {
+                qlang_compile::lsp::Severity::Error => 1,
+                qlang_compile::lsp::Severity::Warning => 2,
+                qlang_compile::lsp::Severity::Info => 3,
+            },
+            "source": "qlang",
+            "message": d.message
+        })
+    }).collect();
+
+    send_response(stdout, &serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": { "uri": uri, "diagnostics": lsp_diags }
+    }));
 }

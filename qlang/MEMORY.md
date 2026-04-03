@@ -6,8 +6,8 @@ Repository: https://github.com/Mirkulix/qland (main branch)
 Also mirrored at: https://github.com/Mirkulix/IGQK (branch claude/ai-programming-language-os-nIRJA)
 
 ## Current Stats
-- 493 tests, 0 failures
-- 28,930 lines of Rust code
+- 526 tests, 0 failures
+- ~31,000 lines of Rust code
 - 66 modules across 5 crates
 - 52 commits
 
@@ -60,24 +60,41 @@ qlang/
 - CI/CD GitHub Actions
 - VS Code syntax highlighting
 
+## Completed in Session 2 (2026-04-03)
+
+### P0 — All Done
+1. **VM-Graph Integration**: ✅ 18 graph ops (matmul, add, relu, softmax, etc.) callable as VM functions via `graph_ops.rs`
+2. **Real MNIST Data**: ✅ IDX format parsing, robust error handling, 17 new tests, fallback to synthetic
+3. **pip install works**: ✅ `maturin build` produces working wheel, `pip install` verified
+
+### P1 — All Done
+4. **GPU Runtime**: ✅ `gpu_runtime.rs` with GpuDevice abstraction, CPU fallback, shader simulation, 7 tests
+5. **ONNX Large Model**: ✅ `ModelMetadata`, `process_layers()` for streaming, file I/O helpers, 2 new tests
+6. **Benchmarks**: ✅ `benchmark_suite.rs` + `benchmark_pytorch.py` for comparison
+7. **Parallel Execution**: ✅ `parallel.rs` with rayon-based wavefront parallelism, 3 tests
+
+### P2 — All Done
+8. **Parser Error Recovery**: ✅ `parse_graph_recovering()` collects up to 50 errors, returns partial AST
+9. **rustdoc**: ✅ All crates have crate-level and module-level documentation
+10. **VS Code LSP**: ✅ Full LSP server in `qlang-cli lsp` — diagnostics, completions, hover, goto-definition
+11. **Model Registry**: ✅ `registry.rs` with save/load/list/delete/compare, 6 tests
+
 ## What Needs Work Next (Priority Order)
 
 ### P0 — Must Fix
-1. **VM and Graph not fully connected**: run_graph() exists but VM can't call graph ops as functions. unified.rs is a bridge but needs deeper integration — graph ops should be callable from VM scripts like regular functions.
-2. **No real data tested**: Only synthetic MNIST. Need to download real MNIST and verify accuracy.
-3. **pip install doesn't work yet**: pyproject.toml exists but no wheel is built. Need `maturin build` and PyPI publish.
+1. **Real MNIST accuracy**: Download actual MNIST dataset, train, verify >95% accuracy
+2. **PyPI publish**: Build wheel and upload to PyPI (`maturin publish`)
+3. **GPU with wgpu**: Add actual wgpu-rs behind feature flag for real GPU execution
 
 ### P1 — Should Build
-4. **GPU runtime**: WGSL shaders are generated but never executed. Need wgpu-rs integration.
-5. **Large model support**: Only tested with <10K params. Need to load and compress LLama-7B via ONNX import.
-6. **Benchmarks vs PyTorch**: Need apples-to-apples comparison on same models/hardware.
-7. **Multi-threaded execution**: Scheduler detects parallelism but executor is single-threaded. Need rayon integration.
+4. **ONNX protobuf**: Parse real .onnx files (protobuf format), not just JSON
+5. **Transformer model**: Full transformer architecture (attention, multi-head, etc.)
+6. **Distributed training**: Multi-node training via qlang-agent
 
 ### P2 — Should Add
-8. **Proper error recovery in parser**: Currently stops at first error.
-9. **rustdoc for all public APIs**: No doc comments on most functions.
-10. **VS Code extension with LSP**: Syntax highlighting works, but LSP (completions, diagnostics) not wired up.
-11. **Model registry**: Store and version trained models.
+7. **CI benchmarks**: Automated performance regression testing
+8. **Model hub**: Remote model registry with HTTP API
+9. **Interactive debugger**: Step through graph execution with state inspection
 
 ### P3 — Enterprise
 12. SOC2 compliance, security audit

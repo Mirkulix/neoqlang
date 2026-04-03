@@ -34,3 +34,6 @@ pub mod types;
 pub mod unified;
 pub mod concurrency;
 pub mod graph_ops;
+pub mod gpu_runtime;
+pub mod registry;
+pub mod parallel;

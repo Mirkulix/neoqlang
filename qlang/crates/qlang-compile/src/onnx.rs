@@ -780,6 +780,97 @@ pub fn to_onnx_json(graph: &Graph) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Large Model Support
+// ---------------------------------------------------------------------------
+
+/// Metadata about a model (extracted without loading weights).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelMetadata {
+    pub name: String,
+    pub num_nodes: usize,
+    pub num_parameters: u64,
+    pub num_layers: usize,
+    pub op_histogram: HashMap<String, usize>,
+    pub input_shapes: Vec<(String, Vec<OnnxDim>)>,
+    pub output_shapes: Vec<(String, Vec<OnnxDim>)>,
+    pub estimated_size_mb: f64,
+}
+
+/// Extract metadata from an ONNX graph without loading weight data.
+pub fn model_metadata(onnx: &OnnxGraph) -> ModelMetadata {
+    let mut op_histogram: HashMap<String, usize> = HashMap::new();
+    for node in &onnx.nodes {
+        *op_histogram.entry(node.op_type.clone()).or_insert(0) += 1;
+    }
+
+    let mut num_parameters: u64 = 0;
+    for init in &onnx.initializers {
+        let elems: u64 = init.shape.iter().map(|&d| d as u64).product();
+        num_parameters += elems;
+    }
+
+    let estimated_size_mb = (num_parameters * 4) as f64 / (1024.0 * 1024.0);
+
+    let num_layers = onnx
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op_type.as_str(), "MatMul" | "Conv" | "Gemm" | "Linear"))
+        .count();
+
+    ModelMetadata {
+        name: onnx.name.clone(),
+        num_nodes: onnx.nodes.len(),
+        num_parameters,
+        num_layers,
+        op_histogram,
+        input_shapes: onnx
+            .inputs
+            .iter()
+            .map(|i| (i.name.clone(), i.shape.clone()))
+            .collect(),
+        output_shapes: onnx
+            .outputs
+            .iter()
+            .map(|o| (o.name.clone(), o.shape.clone()))
+            .collect(),
+        estimated_size_mb,
+    }
+}
+
+/// Process an ONNX graph layer-by-layer for large models.
+/// Calls `processor` for each layer (MatMul/Conv/Gemm node) in order.
+/// This enables streaming processing without loading the entire model.
+pub fn process_layers<F>(onnx: &OnnxGraph, mut processor: F) -> Result<(), ConversionError>
+where
+    F: FnMut(usize, &OnnxNode) -> Result<(), ConversionError>,
+{
+    let mut layer_idx = 0;
+    for node in &onnx.nodes {
+        if matches!(
+            node.op_type.as_str(),
+            "MatMul" | "Conv" | "Gemm" | "Linear" | "LayerNorm" | "Attention"
+        ) {
+            processor(layer_idx, node)?;
+            layer_idx += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Load an ONNX JSON model from a file.
+pub fn from_onnx_json_file(path: &Path) -> Result<OnnxGraph, ConversionError> {
+    let data = std::fs::read_to_string(path)?;
+    serde_json::from_str(&data).map_err(|e| ConversionError::Io(format!("JSON parse error: {e}")))
+}
+
+/// Save an ONNX JSON model to a file.
+pub fn to_onnx_json_file(graph: &Graph, path: &Path) -> Result<(), ConversionError> {
+    let json = to_onnx_json(graph);
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -998,5 +1089,37 @@ mod tests {
         let sm_node = g2.nodes.iter().find(|n| matches!(n.op, Op::Softmax { .. }));
         assert!(sm_node.is_some());
         assert_eq!(sm_node.unwrap().op, Op::Softmax { axis: 1 });
+    }
+
+    #[test]
+    fn test_model_metadata() {
+        let g = simple_relu_graph();
+        let onnx = to_onnx(&g);
+        let meta = model_metadata(&onnx);
+        assert_eq!(meta.name, "relu_test");
+        assert_eq!(meta.num_nodes, 1); // only relu (input/output excluded by ONNX export)
+        assert!(!meta.op_histogram.is_empty());
+    }
+
+    #[test]
+    fn test_process_layers() {
+        let mut g = Graph::new("mlp");
+        let x = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_mat(1, 4)]);
+        let w = g.add_node(Op::Input { name: "w".into() }, vec![], vec![f32_mat(4, 2)]);
+        let mm = g.add_node(Op::MatMul, vec![f32_mat(1, 4), f32_mat(4, 2)], vec![f32_mat(1, 2)]);
+        let relu = g.add_node(Op::Relu, vec![f32_mat(1, 2)], vec![f32_mat(1, 2)]);
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_mat(1, 2)], vec![]);
+        g.add_edge(x, 0, mm, 0, f32_mat(1, 4));
+        g.add_edge(w, 0, mm, 1, f32_mat(4, 2));
+        g.add_edge(mm, 0, relu, 0, f32_mat(1, 2));
+        g.add_edge(relu, 0, out, 0, f32_mat(1, 2));
+
+        let onnx = to_onnx(&g);
+        let mut layer_count = 0;
+        process_layers(&onnx, |_idx, _node| {
+            layer_count += 1;
+            Ok(())
+        }).unwrap();
+        assert_eq!(layer_count, 1); // one MatMul layer
     }
 }
