@@ -67,6 +67,8 @@ pub struct OnnxInitializer {
     pub shape: Vec<usize>,
     /// Raw data encoded as base64 in JSON; left empty for structural conversion.
     pub data_base64: Option<String>,
+    /// Extracted weight data as f32 values (from float_data or raw_data in TensorProto).
+    pub weights: Option<Vec<f32>>,
 }
 
 /// Top-level ONNX-like graph.
@@ -414,11 +416,15 @@ pub fn from_onnx_protobuf(data: &[u8]) -> Result<OnnxGraph, ConversionError> {
             .map(|f| f.data.as_u64() as usize)
             .collect();
 
+        // Extract weight data from float_data (field 4, packed) or raw_data (field 13)
+        let weights = extract_weight_data(&tensor_fields);
+
         initializers.push(OnnxInitializer {
             name,
             elem_type: onnx_data_type_to_str(data_type).to_string(),
             shape: dims,
             data_base64: None,
+            weights,
         });
     }
 
@@ -474,6 +480,74 @@ fn parse_value_info(data: &[u8]) -> Option<OnnxValueInfo> {
         elem_type: onnx_data_type_to_str(elem_type).to_string(),
         shape,
     })
+}
+
+/// Extract f32 weight data from TensorProto fields.
+///
+/// Looks for float_data (field 4, packed repeated float as length-delimited bytes)
+/// and raw_data (field 13, raw little-endian bytes). float_data takes priority if
+/// present; otherwise raw_data is used.
+fn extract_weight_data(tensor_fields: &[ProtoField]) -> Option<Vec<f32>> {
+    // Try float_data first (field 4) -- packed repeated float sent as length-delimited
+    let float_data_fields: Vec<&ProtoField> = tensor_fields
+        .iter()
+        .filter(|f| f.field_number == 4)
+        .collect();
+
+    if !float_data_fields.is_empty() {
+        let mut floats = Vec::new();
+        for field in &float_data_fields {
+            match &field.data {
+                // Packed encoding: length-delimited blob of little-endian f32s
+                ProtoData::Bytes(bytes) => {
+                    floats.extend(parse_packed_f32s(bytes));
+                }
+                // Individual float encoded as Fixed32 (non-packed, rare but valid)
+                ProtoData::Fixed32(v) => {
+                    floats.push(f32::from_bits(*v));
+                }
+                _ => {}
+            }
+        }
+        if !floats.is_empty() {
+            return Some(floats);
+        }
+    }
+
+    // Fall back to raw_data (field 13) -- raw little-endian bytes
+    if let Some(raw_field) = tensor_fields.iter().find(|f| f.field_number == 13) {
+        let bytes = raw_field.data.as_bytes();
+        if !bytes.is_empty() {
+            let floats = parse_packed_f32s(bytes);
+            if !floats.is_empty() {
+                return Some(floats);
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse a byte slice as packed little-endian f32 values.
+fn parse_packed_f32s(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+impl OnnxGraph {
+    /// Total size in bytes of all extracted weight data across initializers.
+    ///
+    /// Counts only initializers that have actual weight data loaded (i.e. `weights`
+    /// is `Some`). Each f32 value contributes 4 bytes.
+    pub fn total_weight_bytes(&self) -> usize {
+        self.initializers
+            .iter()
+            .filter_map(|init| init.weights.as_ref())
+            .map(|w| w.len() * std::mem::size_of::<f32>())
+            .sum()
+    }
 }
 
 /// Load an ONNX protobuf file and convert to our OnnxGraph.
@@ -1553,5 +1627,234 @@ mod tests {
         let graph = result.unwrap();
         assert_eq!(graph.name, "test");
         assert!(graph.nodes.is_empty());
+    }
+
+    #[test]
+    fn test_parse_packed_f32s() {
+        let val1: f32 = 1.0;
+        let val2: f32 = -2.5;
+        let val3: f32 = 3.14;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&val1.to_le_bytes());
+        bytes.extend_from_slice(&val2.to_le_bytes());
+        bytes.extend_from_slice(&val3.to_le_bytes());
+
+        let floats = parse_packed_f32s(&bytes);
+        assert_eq!(floats.len(), 3);
+        assert_eq!(floats[0], 1.0);
+        assert_eq!(floats[1], -2.5);
+        assert!((floats[2] - 3.14).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_packed_f32s_partial_trailing() {
+        // 5 bytes: one full f32 + 1 trailing byte (ignored by chunks_exact)
+        let val: f32 = 42.0;
+        let mut bytes = val.to_le_bytes().to_vec();
+        bytes.push(0xFF); // trailing garbage
+        let floats = parse_packed_f32s(&bytes);
+        assert_eq!(floats.len(), 1);
+        assert_eq!(floats[0], 42.0);
+    }
+
+    #[test]
+    fn test_parse_packed_f32s_empty() {
+        let floats = parse_packed_f32s(&[]);
+        assert!(floats.is_empty());
+    }
+
+    /// Helper: encode a protobuf varint into bytes.
+    fn encode_varint(mut val: u64) -> Vec<u8> {
+        let mut buf = Vec::new();
+        loop {
+            let mut byte = (val & 0x7F) as u8;
+            val >>= 7;
+            if val != 0 {
+                byte |= 0x80;
+            }
+            buf.push(byte);
+            if val == 0 {
+                break;
+            }
+        }
+        buf
+    }
+
+    /// Helper: encode a protobuf field with length-delimited data.
+    fn encode_ld_field(field_number: u32, data: &[u8]) -> Vec<u8> {
+        let tag = (field_number << 3) | 2;
+        let mut buf = encode_varint(tag as u64);
+        buf.extend(encode_varint(data.len() as u64));
+        buf.extend_from_slice(data);
+        buf
+    }
+
+    /// Helper: encode a protobuf varint field.
+    fn encode_varint_field(field_number: u32, value: u64) -> Vec<u8> {
+        let tag = (field_number << 3) | 0;
+        let mut buf = encode_varint(tag as u64);
+        buf.extend(encode_varint(value));
+        buf
+    }
+
+    /// Build a minimal ONNX model protobuf containing an initializer with weight data.
+    fn build_model_with_initializer(tensor_proto: &[u8]) -> Vec<u8> {
+        // GraphProto: field 2 = name "g", field 5 = initializer (TensorProto)
+        let mut graph = Vec::new();
+        graph.extend(encode_ld_field(2, b"g"));          // name
+        graph.extend(encode_ld_field(5, tensor_proto));   // initializer
+
+        // ModelProto: field 7 = graph
+        encode_ld_field(7, &graph)
+    }
+
+    #[test]
+    fn test_weight_extraction_float_data_packed() {
+        // Build TensorProto with:
+        //   field 1 = dim 3 (varint)
+        //   field 2 = data_type 1 (FLOAT)
+        //   field 4 = float_data packed (3 floats as length-delimited bytes)
+        //   field 8 = name "w1"
+        let floats: [f32; 3] = [1.0, 2.0, 3.0];
+        let mut packed = Vec::new();
+        for f in &floats {
+            packed.extend_from_slice(&f.to_le_bytes());
+        }
+
+        let mut tensor = Vec::new();
+        tensor.extend(encode_varint_field(1, 3));         // dims = [3]
+        tensor.extend(encode_varint_field(2, 1));         // data_type = FLOAT
+        tensor.extend(encode_ld_field(4, &packed));       // float_data (packed)
+        tensor.extend(encode_ld_field(8, b"w1"));         // name
+
+        let model = build_model_with_initializer(&tensor);
+        let graph = from_onnx_protobuf(&model).expect("parse model");
+
+        assert_eq!(graph.initializers.len(), 1);
+        let init = &graph.initializers[0];
+        assert_eq!(init.name, "w1");
+        assert_eq!(init.shape, vec![3]);
+        assert_eq!(init.elem_type, "f32");
+
+        let weights = init.weights.as_ref().expect("weights should be present");
+        assert_eq!(weights.len(), 3);
+        assert_eq!(weights[0], 1.0);
+        assert_eq!(weights[1], 2.0);
+        assert_eq!(weights[2], 3.0);
+    }
+
+    #[test]
+    fn test_weight_extraction_raw_data() {
+        // Build TensorProto with raw_data (field 13) instead of float_data
+        let floats: [f32; 2] = [-1.5, 0.25];
+        let mut raw = Vec::new();
+        for f in &floats {
+            raw.extend_from_slice(&f.to_le_bytes());
+        }
+
+        let mut tensor = Vec::new();
+        tensor.extend(encode_varint_field(1, 2));         // dims = [2]
+        tensor.extend(encode_varint_field(2, 1));         // data_type = FLOAT
+        tensor.extend(encode_ld_field(8, b"w2"));         // name
+        tensor.extend(encode_ld_field(13, &raw));         // raw_data
+
+        let model = build_model_with_initializer(&tensor);
+        let graph = from_onnx_protobuf(&model).expect("parse model");
+
+        let init = &graph.initializers[0];
+        assert_eq!(init.name, "w2");
+        let weights = init.weights.as_ref().expect("weights from raw_data");
+        assert_eq!(weights.len(), 2);
+        assert_eq!(weights[0], -1.5);
+        assert_eq!(weights[1], 0.25);
+    }
+
+    #[test]
+    fn test_weight_extraction_float_data_priority_over_raw_data() {
+        // When both float_data and raw_data are present, float_data wins.
+        let float_vals: [f32; 1] = [7.0];
+        let raw_vals: [f32; 1] = [9.0];
+        let mut packed = Vec::new();
+        for f in &float_vals {
+            packed.extend_from_slice(&f.to_le_bytes());
+        }
+        let mut raw = Vec::new();
+        for f in &raw_vals {
+            raw.extend_from_slice(&f.to_le_bytes());
+        }
+
+        let mut tensor = Vec::new();
+        tensor.extend(encode_varint_field(1, 1));
+        tensor.extend(encode_varint_field(2, 1));
+        tensor.extend(encode_ld_field(4, &packed));       // float_data
+        tensor.extend(encode_ld_field(8, b"w3"));
+        tensor.extend(encode_ld_field(13, &raw));         // raw_data
+
+        let model = build_model_with_initializer(&tensor);
+        let graph = from_onnx_protobuf(&model).expect("parse model");
+
+        let weights = graph.initializers[0].weights.as_ref().unwrap();
+        assert_eq!(weights, &[7.0]); // float_data wins
+    }
+
+    #[test]
+    fn test_no_weight_data_yields_none() {
+        // TensorProto with only name/shape/type, no float_data or raw_data
+        let mut tensor = Vec::new();
+        tensor.extend(encode_varint_field(1, 4));
+        tensor.extend(encode_varint_field(2, 1));
+        tensor.extend(encode_ld_field(8, b"empty"));
+
+        let model = build_model_with_initializer(&tensor);
+        let graph = from_onnx_protobuf(&model).expect("parse model");
+
+        assert!(graph.initializers[0].weights.is_none());
+    }
+
+    #[test]
+    fn test_total_weight_bytes() {
+        let graph = OnnxGraph {
+            name: "test".into(),
+            nodes: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            initializers: vec![
+                OnnxInitializer {
+                    name: "a".into(),
+                    elem_type: "f32".into(),
+                    shape: vec![3],
+                    data_base64: None,
+                    weights: Some(vec![1.0, 2.0, 3.0]),
+                },
+                OnnxInitializer {
+                    name: "b".into(),
+                    elem_type: "f32".into(),
+                    shape: vec![2],
+                    data_base64: None,
+                    weights: Some(vec![4.0, 5.0]),
+                },
+                OnnxInitializer {
+                    name: "c".into(),
+                    elem_type: "f32".into(),
+                    shape: vec![10],
+                    data_base64: None,
+                    weights: None, // no data loaded
+                },
+            ],
+        };
+        // 3 floats + 2 floats = 5 floats * 4 bytes = 20 bytes
+        assert_eq!(graph.total_weight_bytes(), 20);
+    }
+
+    #[test]
+    fn test_total_weight_bytes_empty() {
+        let graph = OnnxGraph {
+            name: "empty".into(),
+            nodes: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            initializers: vec![],
+        };
+        assert_eq!(graph.total_weight_bytes(), 0);
     }
 }

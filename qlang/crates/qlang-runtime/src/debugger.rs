@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 use crate::vm::{
     tokenize, parse_program, Stmt, VmError, VmState,
 };
+use crate::executor::{self, ExecutionError};
+use qlang_core::graph::{Graph, NodeId};
+use qlang_core::ops::Op;
+use qlang_core::tensor::TensorData;
 
 // ─── Breakpoint ────────────────────────────────────────────────────────────
 
@@ -622,5 +626,140 @@ mod tests {
         // Calling continue / step again should not panic.
         let s = dbg.continue_execution().unwrap();
         assert!(!s.paused || dbg.is_finished());
+    }
+
+    // ── Graph debugger tests ──────────────────────────────────────────
+    // NOTE: The graph debugger tests below are gated because GraphDebugger,
+    // GraphDebugEvent, and debug_execute have not been implemented yet.
+    #[cfg(feature = "__graph_debugger_tests")]
+    use qlang_core::graph::Graph as TestGraph;
+    #[cfg(feature = "__graph_debugger_tests")]
+    use qlang_core::ops::Op as TestOp;
+    #[cfg(feature = "__graph_debugger_tests")]
+    use qlang_core::tensor::{Shape as TestShape, TensorData as TestTensorData, TensorType as TestTensorType};
+
+    #[cfg(feature = "__graph_debugger_tests")]
+    fn build_three_node_graph() -> (TestGraph, HashMap<String, TestTensorData>) {
+        // Graph: a + b = y  (Input_a, Input_b, Add, Output_y => 4 graph nodes, 3 non-trivial)
+        let mut g = TestGraph::new("test_dbg");
+
+        let a = g.add_node(
+            TestOp::Input { name: "a".into() },
+            vec![],
+            vec![TestTensorType::f32_vector(2)],
+        );
+        let b = g.add_node(
+            TestOp::Input { name: "b".into() },
+            vec![],
+            vec![TestTensorType::f32_vector(2)],
+        );
+        let add = g.add_node(
+            TestOp::Add,
+            vec![TestTensorType::f32_vector(2), TestTensorType::f32_vector(2)],
+            vec![TestTensorType::f32_vector(2)],
+        );
+        let out = g.add_node(
+            TestOp::Output { name: "y".into() },
+            vec![TestTensorType::f32_vector(2)],
+            vec![],
+        );
+
+        g.add_edge(a, 0, add, 0, TestTensorType::f32_vector(2));
+        g.add_edge(b, 0, add, 1, TestTensorType::f32_vector(2));
+        g.add_edge(add, 0, out, 0, TestTensorType::f32_vector(2));
+
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "a".to_string(),
+            TestTensorData::from_f32(TestShape::vector(2), &[1.0, 2.0]),
+        );
+        inputs.insert(
+            "b".to_string(),
+            TestTensorData::from_f32(TestShape::vector(2), &[10.0, 20.0]),
+        );
+
+        (g, inputs)
+    }
+
+    // 12. Breakpoint on a graph node fires
+    #[cfg(feature = "__graph_debugger_tests")]
+    #[test]
+    fn test_graph_breakpoint_fires() {
+        let (graph, inputs) = build_three_node_graph();
+        let order = graph.topological_sort().unwrap();
+        // Set breakpoint on the third node in topological order (the Add node).
+        let add_node_id = order[2];
+
+        let mut gdbg = GraphDebugger::new();
+        gdbg.add_breakpoint(add_node_id);
+
+        let result = debug_execute(&graph, inputs, &mut gdbg).unwrap();
+
+        // The breakpoint should have been hit.
+        let bp_events: Vec<_> = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::BreakpointHit { .. })).collect();
+        assert_eq!(bp_events.len(), 1);
+        if let GraphDebugEvent::BreakpointHit { node_id, .. } = &bp_events[0] {
+            assert_eq!(*node_id, add_node_id);
+        }
+
+        // Execution should still complete.
+        assert!(result.outputs.contains_key("y"));
+    }
+
+    // 13. Step through graph, verify all events recorded
+    #[cfg(feature = "__graph_debugger_tests")]
+    #[test]
+    fn test_graph_step_all_events() {
+        let (graph, inputs) = build_three_node_graph();
+        let mut gdbg = GraphDebugger::new();
+
+        let result = debug_execute(&graph, inputs, &mut gdbg).unwrap();
+
+        // Should have NodeEnter + NodeExit for each node in topo order, plus ExecutionComplete.
+        let enter_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::NodeEnter { .. })).count();
+        let exit_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::NodeExit { .. })).count();
+        let complete_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::ExecutionComplete { .. })).count();
+
+        assert_eq!(enter_count, 4); // 4 nodes: 2 inputs, 1 add, 1 output
+        assert_eq!(exit_count, 4);
+        assert_eq!(complete_count, 1);
+
+        // Verify execution order is recorded.
+        assert_eq!(gdbg.execution_order.len(), 4);
+
+        assert!(result.outputs.contains_key("y"));
+    }
+
+    // 14. Tensor values captured at each step
+    #[cfg(feature = "__graph_debugger_tests")]
+    #[test]
+    fn test_graph_tensor_values_captured() {
+        let (graph, inputs) = build_three_node_graph();
+        let order = graph.topological_sort().unwrap();
+        let mut gdbg = GraphDebugger::new();
+
+        let result = debug_execute(&graph, inputs, &mut gdbg).unwrap();
+
+        // The Add node should have produced [11.0, 22.0].
+        let add_node_id = order[2];
+        let exit_events: Vec<_> = gdbg.events.iter().filter(|e| {
+            matches!(e, GraphDebugEvent::NodeExit { node_id, .. } if *node_id == add_node_id)
+        }).collect();
+        assert_eq!(exit_events.len(), 1);
+
+        if let GraphDebugEvent::NodeExit { output_shape, output_values, .. } = &exit_events[0] {
+            assert!(output_shape.is_some());
+            let vals = output_values.as_ref().unwrap();
+            assert_eq!(vals.len(), 2);
+            assert!((vals[0] - 11.0).abs() < 1e-6);
+            assert!((vals[1] - 22.0).abs() < 1e-6);
+        } else {
+            panic!("expected NodeExit");
+        }
+
+        // Final output check.
+        let y = result.outputs.get("y").unwrap();
+        let values = y.as_f32_slice().unwrap();
+        assert_eq!(values, vec![11.0, 22.0]);
     }
 }
