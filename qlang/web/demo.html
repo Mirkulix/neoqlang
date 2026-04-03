@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG Dashboard — Demo</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --error: #f85149;
+  --purple: #bc8cff;
+  --orange: #f0883e;
+  --node-input: #58a6ff;
+  --node-op: #3fb950;
+  --node-output: #f0883e;
+  --node-quantum: #bc8cff;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; overflow: hidden; }
+
+#app {
+  display: grid;
+  grid-template-rows: 48px 1fr 160px;
+  grid-template-columns: 320px 1fr 340px;
+  grid-template-areas:
+    "header header header"
+    "left   center right"
+    "bottom bottom bottom";
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+#header {
+  grid-area: header;
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 10;
+}
+#header .logo { font-weight: 700; font-size: 18px; letter-spacing: 2px; color: var(--accent); }
+#header .logo span { color: var(--purple); }
+.conn-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+.demo-badge { background: var(--warning); color: #000; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 8px; letter-spacing: .5px; }
+.header-stats { margin-left: auto; display: flex; gap: 20px; font-size: 12px; color: var(--text-muted); }
+.header-stats .val { color: var(--text); font-weight: 600; }
+
+.panel { background: var(--card); overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); padding: 12px 14px 8px; flex-shrink: 0; }
+
+#left { grid-area: left; }
+#center { grid-area: center; }
+#right { grid-area: right; }
+#bottom { grid-area: bottom; }
+
+/* Graph */
+#graph-svg { flex: 1; width: 100%; }
+#graph-svg .node-circle { cursor: pointer; transition: r .15s, filter .15s; }
+#graph-svg .node-circle:hover { filter: brightness(1.3); }
+#graph-svg .node-circle.executing { animation: pulse-node .6s ease-in-out infinite alternate; }
+@keyframes pulse-node { from { r: 18; } to { r: 24; filter: brightness(1.5); } }
+#graph-svg .edge-line { stroke: var(--border); stroke-width: 2; }
+#graph-svg .node-label { fill: var(--text); font-size: 10px; text-anchor: middle; pointer-events: none; font-weight: 600; }
+#node-info { flex-shrink: 0; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); min-height: 60px; }
+#node-info .ni-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+
+/* Feed */
+.feed-filters { display: flex; gap: 4px; padding: 0 14px 8px; flex-shrink: 0; }
+.feed-filters button { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all .15s; }
+.feed-filters button:hover, .feed-filters button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#feed { flex: 1; overflow-y: auto; padding: 0 14px 8px; scroll-behavior: smooth; }
+#feed::-webkit-scrollbar { width: 6px; }
+#feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.feed-item { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-start; animation: feed-in .25s ease-out; }
+@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.feed-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.feed-dot.graph { background: var(--success); }
+.feed-dot.agent { background: var(--accent); }
+.feed-dot.training { background: var(--warning); }
+.feed-dot.system { background: var(--text-muted); }
+.feed-dot.error { background: var(--error); }
+.feed-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; width: 55px; }
+.feed-msg { font-size: 12px; color: var(--text); line-height: 1.4; }
+.feed-msg .tag { font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-right: 4px; font-weight: 600; }
+.tag-graph { background: rgba(63,185,80,.15); color: var(--success); }
+.tag-agent { background: rgba(88,166,255,.15); color: var(--accent); }
+.tag-training { background: rgba(210,153,34,.15); color: var(--warning); }
+.tag-system { background: rgba(139,148,158,.15); color: var(--text-muted); }
+.tag-error { background: rgba(248,81,73,.15); color: var(--error); }
+
+/* Metrics */
+#right { gap: 0; }
+.metric-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.metric-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+#train-canvas { width: 100%; height: 120px; display: block; }
+.metric-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.metric-row .label { color: var(--text-muted); }
+.metric-row .value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-row .value.green { color: var(--success); }
+.metric-row .value.orange { color: var(--orange); }
+.metric-row .value.purple { color: var(--purple); }
+.model-list { max-height: 80px; overflow-y: auto; }
+.model-item { font-size: 11px; padding: 3px 0; color: var(--text-muted); display: flex; justify-content: space-between; }
+.model-item .name { color: var(--accent); }
+
+/* REPL */
+#bottom { display: flex; flex-direction: column; background: var(--card); }
+#repl-output { flex: 1; overflow-y: auto; padding: 8px 14px; font-family: 'SF Mono','Fira Code','Cascadia Code',monospace; font-size: 12px; color: var(--text-muted); white-space: pre-wrap; line-height: 1.5; }
+#repl-output::-webkit-scrollbar { width: 6px; }
+#repl-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.repl-line-input { color: var(--accent); }
+.repl-line-ok { color: var(--success); }
+.repl-line-err { color: var(--error); }
+#repl-input-row { display: flex; border-top: 1px solid var(--border); flex-shrink: 0; }
+#repl-input-row .prompt { padding: 8px 0 8px 14px; color: var(--purple); font-family: monospace; font-weight: 700; }
+#repl-input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: 'SF Mono','Fira Code','Cascadia Code',monospace; font-size: 13px; padding: 8px; }
+#repl-input::placeholder { color: var(--text-muted); }
+#repl-send { background: var(--accent); color: #fff; border: none; padding: 0 16px; cursor: pointer; font-weight: 600; font-size: 12px; transition: background .15s; }
+#repl-send:hover { background: #79b8ff; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media (max-width: 1024px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 48px 250px 1fr 280px 160px; grid-template-areas: "header" "left" "center" "right" "bottom"; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div class="logo">Q<span>LANG</span></div>
+    <div class="conn-status">
+      <div class="conn-dot"></div>
+      <span>Demo Mode</span>
+    </div>
+    <span class="demo-badge">DEMO</span>
+    <div class="header-stats">
+      <span>Nodes <span class="val" id="stat-nodes">0</span></span>
+      <span>FLOPs <span class="val" id="stat-flops">0</span></span>
+      <span>Mem <span class="val" id="stat-mem">0 MB</span></span>
+      <span>Uptime <span class="val" id="stat-uptime">0s</span></span>
+    </div>
+  </div>
+
+  <div class="panel" id="left">
+    <div class="panel-title">Graph Visualizer</div>
+    <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="node-info">Click a node to inspect</div>
+  </div>
+
+  <div class="panel" id="center">
+    <div class="panel-title">Activity Feed</div>
+    <div class="feed-filters">
+      <button class="active" data-filter="all">All</button>
+      <button data-filter="graph">Graph</button>
+      <button data-filter="agent">Agent</button>
+      <button data-filter="training">Training</button>
+      <button data-filter="system">System</button>
+    </div>
+    <div id="feed"></div>
+  </div>
+
+  <div class="panel" id="right">
+    <div class="panel-title">Metrics</div>
+    <div class="metric-section">
+      <h3>Training Progress</h3>
+      <canvas id="train-canvas"></canvas>
+    </div>
+    <div class="metric-section">
+      <h3>IGQK Compression</h3>
+      <div class="metric-row"><span class="label">Original</span><span class="value" id="m-orig">--</span></div>
+      <div class="metric-row"><span class="label">Compressed</span><span class="value green" id="m-comp">--</span></div>
+      <div class="metric-row"><span class="label">Ratio</span><span class="value orange" id="m-ratio">--</span></div>
+      <div class="metric-row"><span class="label">Accuracy Delta</span><span class="value purple" id="m-delta">--</span></div>
+    </div>
+    <div class="metric-section">
+      <h3>System Resources</h3>
+      <div class="metric-row"><span class="label">Nodes Executed</span><span class="value" id="m-nexec">0</span></div>
+      <div class="metric-row"><span class="label">Total FLOPs</span><span class="value" id="m-flops">0</span></div>
+      <div class="metric-row"><span class="label">Peak Memory</span><span class="value" id="m-peak">0 MB</span></div>
+    </div>
+    <div class="metric-section" style="flex:1; overflow:hidden;">
+      <h3>Model Registry</h3>
+      <div class="model-list" id="model-list"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="bottom">
+    <div class="panel-title">REPL (Demo)</div>
+    <div id="repl-output">Welcome to QLANG REPL (demo mode). Type .qlang code and press Enter.
+</div>
+    <div id="repl-input-row">
+      <span class="prompt">qlang&gt;</span>
+      <input id="repl-input" type="text" placeholder="graph G { x = input([784]) ... }" autocomplete="off" spellcheck="false">
+      <button id="repl-send">Run</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// =========================================================================
+//  QLANG Dashboard — DEMO MODE (no server required)
+// =========================================================================
+
+(function() {
+'use strict';
+
+// --------------- State ---------------
+var state = {
+  filter: 'all',
+  feedItems: [],
+  graphNodes: [],
+  graphEdges: [],
+  trainData: { loss: [], accuracy: [] },
+  compression: {},
+  sysResources: { nodesExec: 0, flops: 0, peakMem: 0 },
+  models: [],
+  startTime: Date.now(),
+  executingNode: null,
+};
+
+var $feed = document.getElementById('feed');
+var $graphSvg = document.getElementById('graph-svg');
+var $nodeInfo = document.getElementById('node-info');
+var $trainCanvas = document.getElementById('train-canvas');
+var $replOutput = document.getElementById('repl-output');
+var $replInput = document.getElementById('repl-input');
+
+// --------------- Feed ---------------
+function addFeed(category, html) {
+  var item = { category: category, html: html, time: new Date() };
+  state.feedItems.push(item);
+  if (state.feedItems.length > 500) state.feedItems.shift();
+  if (state.filter === 'all' || state.filter === category) appendFeedDOM(item);
+}
+
+function appendFeedDOM(item) {
+  var div = document.createElement('div');
+  div.className = 'feed-item';
+  div.dataset.category = item.category;
+  div.innerHTML =
+    '<div class="feed-dot ' + item.category + '"></div>' +
+    '<span class="feed-time">' + item.time.toLocaleTimeString() + '</span>' +
+    '<span class="feed-msg"><span class="tag tag-' + item.category + '">' + item.category + '</span>' + item.html + '</span>';
+  $feed.appendChild(div);
+  if ($feed.children.length > 300) $feed.removeChild($feed.firstChild);
+  $feed.scrollTop = $feed.scrollHeight;
+}
+
+function rerenderFeed() {
+  $feed.innerHTML = '';
+  state.feedItems.forEach(function(item) {
+    if (state.filter === 'all' || state.filter === item.category) appendFeedDOM(item);
+  });
+}
+
+document.querySelectorAll('.feed-filters button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.feed-filters button').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    state.filter = btn.dataset.filter;
+    rerenderFeed();
+  });
+});
+
+// --------------- Graph Rendering ---------------
+function nodeColor(type) {
+  var t = (type || '').toLowerCase();
+  if (t === 'input') return 'var(--node-input)';
+  if (t === 'output') return 'var(--node-output)';
+  if (t === 'quantum') return 'var(--node-quantum)';
+  return 'var(--node-op)';
+}
+
+function renderGraph() {
+  var svg = $graphSvg;
+  var w = svg.clientWidth || 300, h = svg.clientHeight || 300;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  var html = '';
+  var nodes = state.graphNodes, edges = state.graphEdges;
+  if (!nodes.length) { svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#8b949e" font-size="12">Waiting for graph...</text>'; return; }
+
+  var idMap = {};
+  nodes.forEach(function(n) { idMap[n.id] = n; });
+  var depth = {};
+  nodes.forEach(function(n){ depth[n.id] = 0; });
+  for (var pass = 0; pass < nodes.length; pass++) {
+    edges.forEach(function(e) { if (depth[e.to] <= depth[e.from]) depth[e.to] = depth[e.from] + 1; });
+  }
+  var maxDepth = 0;
+  nodes.forEach(function(n){ if(depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+  var layers = [];
+  for (var d = 0; d <= maxDepth; d++) layers.push([]);
+  nodes.forEach(function(n){ layers[depth[n.id]].push(n); });
+
+  var padX = 50, padY = 40;
+  var layerH = (h - 2 * padY) / Math.max(maxDepth, 1);
+  layers.forEach(function(layer, d) {
+    var layerW = (w - 2 * padX) / Math.max(layer.length, 1);
+    layer.forEach(function(n, i) {
+      n._x = padX + layerW * i + layerW / 2;
+      n._y = padY + layerH * d + layerH / 2;
+    });
+  });
+
+  edges.forEach(function(e) {
+    var from = idMap[e.from], to = idMap[e.to];
+    if (!from || !to) return;
+    html += '<line class="edge-line" x1="'+from._x+'" y1="'+from._y+'" x2="'+to._x+'" y2="'+to._y+'"/>';
+  });
+
+  nodes.forEach(function(n) {
+    var executing = state.executingNode === n.id;
+    html += '<circle class="node-circle' + (executing ? ' executing' : '') + '" cx="'+n._x+'" cy="'+n._y+'" r="18" fill="' + nodeColor(n.type) + '" data-id="'+n.id+'"/>';
+    html += '<text class="node-label" x="'+n._x+'" y="'+(n._y + 4)+'">'+( n.label || n.id )+'</text>';
+  });
+
+  svg.innerHTML = html;
+
+  svg.querySelectorAll('.node-circle').forEach(function(circle) {
+    circle.addEventListener('click', function() {
+      var node = idMap[circle.dataset.id];
+      if (!node) return;
+      var info = '<div class="ni-title">' + (node.label || node.id) + ' (' + (node.op || node.type) + ')</div>';
+      if (node.shape) info += 'Shape: ' + JSON.stringify(node.shape) + '<br>';
+      if (node.time_ms !== undefined) info += 'Exec time: ' + node.time_ms.toFixed(2) + 'ms<br>';
+      if (node.values) info += 'Values: [' + node.values.slice(0, 6).join(', ') + '...]';
+      $nodeInfo.innerHTML = info;
+    });
+  });
+}
+
+// --------------- Chart ---------------
+function renderChart() {
+  var canvas = $trainCanvas;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+  var loss = state.trainData.loss, acc = state.trainData.accuracy;
+  if (!loss.length) { ctx.fillStyle = '#8b949e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('No training data yet', W / 2, H / 2); return; }
+
+  var pad = { l: 36, r: 36, t: 10, b: 18 };
+  var cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  var n = loss.length;
+  var maxLoss = Math.max.apply(null, loss) * 1.1 || 1;
+
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) { var gy = pad.t + ch * i / 4; ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + cw, gy); ctx.stroke(); }
+
+  // Loss
+  ctx.strokeStyle = '#f85149'; ctx.lineWidth = 2; ctx.beginPath();
+  for (var i = 0; i < n; i++) { var x = pad.l + (i / Math.max(n - 1, 1)) * cw; var y = pad.t + (1 - loss[i] / maxLoss) * ch; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+  ctx.stroke();
+
+  // Accuracy
+  ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2; ctx.beginPath();
+  for (var i = 0; i < n; i++) { var x = pad.l + (i / Math.max(n - 1, 1)) * cw; var y = pad.t + (1 - acc[i]) * ch; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+  ctx.stroke();
+
+  ctx.fillStyle = '#8b949e'; ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right'; ctx.fillText(maxLoss.toFixed(2), pad.l - 4, pad.t + 8); ctx.fillText('0', pad.l - 4, pad.t + ch + 4);
+  ctx.textAlign = 'left'; ctx.fillText('1.0', pad.l + cw + 4, pad.t + 8); ctx.fillText('0', pad.l + cw + 4, pad.t + ch + 4);
+  ctx.textAlign = 'center'; ctx.fillText('Epoch 1', pad.l, pad.t + ch + 14); ctx.fillText('Epoch ' + n, pad.l + cw, pad.t + ch + 14);
+
+  ctx.fillStyle = '#f85149'; ctx.fillRect(pad.l, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.textAlign = 'left'; ctx.fillText('Loss', pad.l + 12, pad.t + 4);
+  ctx.fillStyle = '#3fb950'; ctx.fillRect(pad.l + 50, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.fillText('Accuracy', pad.l + 62, pad.t + 4);
+}
+
+// --------------- Helpers ---------------
+function formatNumber(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderHeaderStats() {
+  document.getElementById('stat-nodes').textContent = state.graphNodes.length;
+  document.getElementById('stat-flops').textContent = formatNumber(state.sysResources.flops);
+  document.getElementById('stat-mem').textContent = state.sysResources.peakMem + ' MB';
+}
+
+function updateUptime() {
+  var s = Math.floor((Date.now() - state.startTime) / 1000);
+  var m = Math.floor(s / 60); s = s % 60;
+  var h = Math.floor(m / 60); m = m % 60;
+  document.getElementById('stat-uptime').textContent = (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+}
+setInterval(updateUptime, 1000);
+
+function renderCompression() {
+  var c = state.compression;
+  document.getElementById('m-orig').textContent = c.original_size || '--';
+  document.getElementById('m-comp').textContent = c.compressed_size || '--';
+  document.getElementById('m-ratio').textContent = c.ratio ? c.ratio + 'x' : '--';
+  document.getElementById('m-delta').textContent = c.accuracy_delta !== undefined ? (c.accuracy_delta > 0 ? '+' : '') + c.accuracy_delta + '%' : '--';
+}
+
+function renderResources() {
+  document.getElementById('m-nexec').textContent = state.sysResources.nodesExec;
+  document.getElementById('m-flops').textContent = formatNumber(state.sysResources.flops);
+  document.getElementById('m-peak').textContent = state.sysResources.peakMem + ' MB';
+}
+
+function renderModels() {
+  var el = document.getElementById('model-list');
+  el.innerHTML = '';
+  state.models.forEach(function(m) {
+    el.innerHTML += '<div class="model-item"><span class="name">' + m.name + '</span><span>' + m.size + ' &middot; ' + m.time + '</span></div>';
+  });
+}
+
+// --------------- REPL (demo) ---------------
+var demoResponses = {
+  'help': 'Available commands: graph, train, compress, status, agents',
+  'status': 'QLANG v0.1.0 | 5 nodes loaded | Training: epoch 15/30 | IGQK: ready',
+  'agents': 'Active agents: Optimizer(idle), Compressor(running), Validator(idle)',
+};
+
+function sendRepl() {
+  var code = $replInput.value.trim();
+  if (!code) return;
+  appendRepl('qlang> ' + code, 'input');
+  $replInput.value = '';
+  var resp = demoResponses[code.toLowerCase()];
+  if (resp) {
+    setTimeout(function(){ appendRepl(resp, 'ok'); }, 150);
+  } else {
+    setTimeout(function(){
+      appendRepl('Compiling graph from input...', 'ok');
+      setTimeout(function(){ appendRepl('OK: graph compiled (demo)', 'ok'); }, 300);
+    }, 150);
+  }
+}
+
+function appendRepl(text, kind) {
+  var span = document.createElement('div');
+  span.className = 'repl-line-' + (kind || 'ok');
+  span.textContent = text;
+  $replOutput.appendChild(span);
+  $replOutput.scrollTop = $replOutput.scrollHeight;
+}
+
+$replInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') sendRepl(); });
+document.getElementById('repl-send').addEventListener('click', sendRepl);
+window.addEventListener('resize', function() { renderGraph(); renderChart(); });
+
+// =====================================================================
+//  SIMULATION ENGINE
+// =====================================================================
+
+// --- Demo graph ---
+var demoNodes = [
+  { id: 'n0', label: 'x', type: 'input', op: 'Input', shape: [1, 784], values: [0.12, -0.03, 0.87, 0.55, -0.21, 0.66] },
+  { id: 'n1', label: 'W1', type: 'input', op: 'Input', shape: [784, 256], values: [0.01, -0.02, 0.03, 0.01] },
+  { id: 'n2', label: 'matmul', type: 'op', op: 'MatMul', shape: [1, 256], time_ms: 1.23 },
+  { id: 'n3', label: 'relu', type: 'op', op: 'Relu', shape: [1, 256], time_ms: 0.08 },
+  { id: 'n4', label: 'evolve', type: 'quantum', op: 'Evolve', shape: [1, 256], time_ms: 4.56 },
+  { id: 'n5', label: 'W2', type: 'input', op: 'Input', shape: [256, 10], values: [0.05, -0.01, 0.02] },
+  { id: 'n6', label: 'matmul', type: 'op', op: 'MatMul', shape: [1, 10], time_ms: 0.34 },
+  { id: 'n7', label: 'softmax', type: 'op', op: 'Softmax', shape: [1, 10], time_ms: 0.05 },
+  { id: 'n8', label: 'y', type: 'output', op: 'Output', shape: [1, 10] },
+];
+var demoEdges = [
+  { from: 'n0', to: 'n2' }, { from: 'n1', to: 'n2' },
+  { from: 'n2', to: 'n3' }, { from: 'n3', to: 'n4' },
+  { from: 'n4', to: 'n6' }, { from: 'n5', to: 'n6' },
+  { from: 'n6', to: 'n7' }, { from: 'n7', to: 'n8' },
+];
+
+// Agent names
+var agents = ['Optimizer', 'Compressor', 'Validator', 'Scheduler', 'Monitor'];
+var agentMsgs = [
+  { from: 'Optimizer', to: 'Compressor', content: 'Training converged at epoch {e}. Ready for compression.' },
+  { from: 'Compressor', to: 'Validator', content: 'Ternary compression complete. Ratio: {r}x. Please validate.' },
+  { from: 'Validator', to: 'Optimizer', content: 'Accuracy delta within tolerance (-{d}%). Approved.' },
+  { from: 'Scheduler', to: 'Optimizer', content: 'Next training batch queued. Batch size: 256.' },
+  { from: 'Monitor', to: 'Scheduler', content: 'Memory usage at {m}MB. FLOPs: {f}. All systems nominal.' },
+  { from: 'Optimizer', to: 'Monitor', content: 'Quantum gradient flow step complete. Entropy: {s}.' },
+  { from: 'Compressor', to: 'Optimizer', content: 'Fisher metric condition number: {c}. Stable.' },
+  { from: 'Validator', to: 'Scheduler', content: 'Model checkpoint validated. Saving to registry.' },
+];
+
+// --- 1. Send the graph immediately ---
+state.graphNodes = demoNodes;
+state.graphEdges = demoEdges;
+renderGraph();
+addFeed('system', 'Demo mode active. Simulating QLANG pipeline.');
+addFeed('graph', 'Graph loaded: 9 nodes, 8 edges (MNIST classifier with quantum evolve)');
+renderHeaderStats();
+
+// --- 2. Simulate node-by-node execution ---
+var execOrder = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8'];
+var execIdx = 0;
+
+function execNextNode() {
+  if (execIdx >= execOrder.length) { execIdx = 0; } // loop
+  var nid = execOrder[execIdx];
+  var node = demoNodes.find(function(n){ return n.id === nid; });
+  state.executingNode = nid;
+  state.sysResources.nodesExec++;
+  state.sysResources.flops += Math.floor(Math.random() * 50000) + 1000;
+  state.sysResources.peakMem = Math.max(state.sysResources.peakMem, Math.floor(Math.random() * 20) + 40);
+  renderGraph();
+  renderResources();
+  renderHeaderStats();
+  addFeed('graph', 'Executing <b>' + node.label + '</b> (' + node.op + ')' + (node.time_ms ? ' ' + node.time_ms + 'ms' : ''));
+  execIdx++;
+  setTimeout(function() { state.executingNode = null; renderGraph(); }, 400);
+}
+
+// Execute a node every 800ms
+setInterval(execNextNode, 800);
+
+// --- 3. Simulate training (30 epochs) ---
+var epoch = 0;
+var maxEpochs = 30;
+
+function simTrainStep() {
+  if (epoch >= maxEpochs) return;
+  epoch++;
+  // Decreasing loss with noise
+  var baseLoss = 2.3 * Math.exp(-0.12 * epoch) + 0.05;
+  var loss = baseLoss + (Math.random() - 0.5) * 0.05;
+  // Increasing accuracy
+  var baseAcc = 1.0 - Math.exp(-0.15 * epoch);
+  var acc = Math.min(baseAcc + (Math.random() - 0.5) * 0.02, 0.99);
+
+  state.trainData.loss.push(Math.max(loss, 0.01));
+  state.trainData.accuracy.push(Math.max(acc, 0));
+  renderChart();
+  addFeed('training', 'Epoch ' + epoch + '/' + maxEpochs + ' | loss=' + loss.toFixed(4) + ' | acc=' + (acc * 100).toFixed(1) + '%');
+
+  if (epoch < maxEpochs) {
+    setTimeout(simTrainStep, 600 + Math.random() * 400);
+  } else {
+    addFeed('training', 'Training complete. Final loss=' + loss.toFixed(4) + ', accuracy=' + (acc * 100).toFixed(1) + '%');
+    // Trigger compression after training
+    setTimeout(simCompression, 1500);
+  }
+}
+
+setTimeout(simTrainStep, 1200);
+
+// --- 4. Simulate agent messages ---
+var agentIdx = 0;
+function simAgentMessage() {
+  var tpl = agentMsgs[agentIdx % agentMsgs.length];
+  var msg = tpl.content
+    .replace('{e}', epoch)
+    .replace('{r}', '14.2')
+    .replace('{d}', (Math.random() * 2).toFixed(1))
+    .replace('{m}', state.sysResources.peakMem)
+    .replace('{f}', formatNumber(state.sysResources.flops))
+    .replace('{s}', (Math.random() * 3 + 1).toFixed(3))
+    .replace('{c}', (Math.random() * 100 + 10).toFixed(1));
+  addFeed('agent', '<b>' + tpl.from + '</b> &rarr; <b>' + tpl.to + '</b>: ' + msg);
+  agentIdx++;
+}
+setInterval(simAgentMessage, 2500);
+
+// --- 5. Simulate compression ---
+function simCompression() {
+  state.compression = {
+    original_size: '94.3 MB',
+    compressed_size: '6.6 MB',
+    ratio: '14.3',
+    accuracy_delta: -0.8,
+  };
+  renderCompression();
+  addFeed('training', 'IGQK ternary compression: 94.3 MB &rarr; 6.6 MB (14.3x)');
+  addFeed('system', 'Compression method: ToTernary + low-rank(r=16)');
+
+  // Save model after compression
+  setTimeout(function() {
+    state.models.push({ name: 'mnist_ternary_v1.qlang', size: '6.6 MB', time: new Date().toLocaleTimeString() });
+    renderModels();
+    addFeed('system', 'Model saved: mnist_ternary_v1.qlang (6.6 MB)');
+  }, 2000);
+
+  setTimeout(function() {
+    state.models.push({ name: 'mnist_lowrank_v1.qlang', size: '12.1 MB', time: new Date().toLocaleTimeString() });
+    renderModels();
+    addFeed('system', 'Model saved: mnist_lowrank_v1.qlang (12.1 MB)');
+  }, 5000);
+}
+
+// --- Initial chart render ---
+renderChart();
+
+})();
+</script>
+</body>
+</html>
