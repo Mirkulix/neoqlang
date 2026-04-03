@@ -45,6 +45,11 @@ impl Value {
     }
 
     fn type_name(&self) -> &'static str {
+        self.type_name_static()
+    }
+
+    /// Public version of type_name for use by other modules.
+    pub fn type_name_static(&self) -> &'static str {
         match self {
             Value::Number(_) => "number",
             Value::Bool(_) => "bool",
@@ -80,7 +85,18 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
-            Value::Tensor(data, shape) => write!(f, "tensor({data:?}, shape={shape:?})"),
+            Value::Tensor(data, shape) => {
+                write!(f, "tensor([")?;
+                for (i, v) in data.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    if *v == (*v as i64) as f64 && v.abs() < 1e15 {
+                        write!(f, "{}", *v as i64)?;
+                    } else {
+                        write!(f, "{v}")?;
+                    }
+                }
+                write!(f, "], shape={shape:?})")
+            }
             Value::Null => write!(f, "null"),
         }
     }
@@ -988,29 +1004,34 @@ impl VmState {
                     _ => {}
                 }
 
-                // User-defined functions
-                let fndef = self.functions.get(name)
-                    .ok_or_else(|| VmError::UndefinedFunction(name.clone()))?
-                    .clone();
+                // User-defined functions (checked before graph ops so users can override)
+                if let Some(fndef) = self.functions.get(name).cloned() {
+                    if evaluated_args.len() != fndef.params.len() {
+                        return Err(VmError::ArityMismatch {
+                            expected: fndef.params.len(),
+                            got: evaluated_args.len(),
+                        });
+                    }
 
-                if evaluated_args.len() != fndef.params.len() {
-                    return Err(VmError::ArityMismatch {
-                        expected: fndef.params.len(),
-                        got: evaluated_args.len(),
-                    });
+                    self.push_scope();
+                    for (param, arg) in fndef.params.iter().zip(evaluated_args.iter()) {
+                        self.declare_var(param, arg.clone());
+                    }
+                    let signal = self.exec_stmts(&fndef.body)?;
+                    self.pop_scope();
+
+                    return match signal {
+                        ExecSignal::Return(v) => Ok(v),
+                        ExecSignal::None => Ok(Value::Null),
+                    };
                 }
 
-                self.push_scope();
-                for (param, arg) in fndef.params.iter().zip(evaluated_args.iter()) {
-                    self.declare_var(param, arg.clone());
+                // Graph operations (matmul, relu, add, etc.)
+                if let Some(result) = crate::graph_ops::try_call_graph_op(name, &evaluated_args)? {
+                    return Ok(result);
                 }
-                let signal = self.exec_stmts(&fndef.body)?;
-                self.pop_scope();
 
-                match signal {
-                    ExecSignal::Return(v) => Ok(v),
-                    ExecSignal::None => Ok(Value::Null),
-                }
+                Err(VmError::UndefinedFunction(name.clone()))
             }
             Expr::Index { array, index } => {
                 let arr_val = self.eval_expr(array)?;

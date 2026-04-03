@@ -84,6 +84,10 @@ pub struct QlangConfig {
     #[serde(default = "default_num_threads")]
     pub num_threads: usize,
 
+    /// Enable parallel execution of independent graph nodes via rayon.
+    #[serde(default)]
+    pub enable_parallel: bool,
+
     /// Directory for cached model artefacts.
     #[serde(default = "default_model_cache_dir")]
     pub model_cache_dir: String,
@@ -114,6 +118,7 @@ impl Default for QlangConfig {
             enable_profiling: false,
             enable_jit: false,
             num_threads: default_num_threads(),
+            enable_parallel: false,
             model_cache_dir: default_model_cache_dir(),
         }
     }
@@ -148,6 +153,9 @@ impl QlangConfig {
             if let Ok(n) = v.parse::<usize>() {
                 cfg.num_threads = n;
             }
+        }
+        if let Ok(v) = std::env::var("QLANG_PARALLEL") {
+            cfg.enable_parallel = matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes");
         }
 
         cfg

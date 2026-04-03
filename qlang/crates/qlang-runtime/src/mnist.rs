@@ -119,36 +119,93 @@ pub fn download_mnist(data_dir: &str) -> Result<(), MnistError> {
 }
 
 impl MnistData {
-    /// Try to load from IDX files, or generate synthetic data.
-    pub fn load(data_dir: &str) -> Self {
+    /// Try to load real MNIST from IDX files in `data_dir`.
+    ///
+    /// Returns `Err` if any files are missing or malformed.
+    /// Use this when you want explicit error handling.
+    pub fn load_from_dir(data_dir: &str) -> Result<Self, MnistError> {
+        // First check all files exist
+        download_mnist(data_dir)?;
+
         let train_images_path = format!("{}/train-images-idx3-ubyte", data_dir);
         let train_labels_path = format!("{}/train-labels-idx1-ubyte", data_dir);
         let test_images_path = format!("{}/t10k-images-idx3-ubyte", data_dir);
         let test_labels_path = format!("{}/t10k-labels-idx1-ubyte", data_dir);
 
-        if Path::new(&train_images_path).exists() {
-            // Load real MNIST
-            let train_images = parse_idx_images(&train_images_path);
-            let train_labels = parse_idx_labels(&train_labels_path);
-            let test_images = parse_idx_images(&test_images_path);
-            let test_labels = parse_idx_labels(&test_labels_path);
+        let (train_images, n_train, rows, cols) = parse_idx_images(&train_images_path)?;
+        let (train_labels, n_train_labels) = parse_idx_labels(&train_labels_path)?;
+        let (test_images, n_test, _, _) = parse_idx_images(&test_images_path)?;
+        let (test_labels, n_test_labels) = parse_idx_labels(&test_labels_path)?;
 
-            let n_train = train_labels.len();
-            let n_test = test_labels.len();
+        let image_size = rows * cols;
 
-            Self {
-                train_images,
-                train_labels,
-                test_images,
-                test_labels,
-                n_train,
-                n_test,
-                image_size: 784,
-                n_classes: 10,
-            }
-        } else {
-            // Generate synthetic MNIST-like data
-            Self::synthetic(1000, 200)
+        // Validate consistency
+        if n_train != n_train_labels {
+            return Err(MnistError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Train image count ({}) != label count ({})",
+                    n_train, n_train_labels
+                ),
+            )));
+        }
+        if n_test != n_test_labels {
+            return Err(MnistError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Test image count ({}) != label count ({})",
+                    n_test, n_test_labels
+                ),
+            )));
+        }
+
+        Ok(Self {
+            train_images,
+            train_labels,
+            test_images,
+            test_labels,
+            n_train,
+            n_test,
+            image_size,
+            n_classes: 10,
+        })
+    }
+
+    /// Load from IDX bytes directly (useful for testing or embedded data).
+    ///
+    /// Accepts raw IDX-format byte slices for each of the four MNIST files.
+    pub fn from_idx_bytes(
+        train_images_bytes: &[u8],
+        train_labels_bytes: &[u8],
+        test_images_bytes: &[u8],
+        test_labels_bytes: &[u8],
+    ) -> Result<Self, MnistError> {
+        let (train_images, n_train, rows, cols) = parse_idx_images_bytes(train_images_bytes)?;
+        let (train_labels, _) = parse_idx_labels_bytes(train_labels_bytes)?;
+        let (test_images, n_test, _, _) = parse_idx_images_bytes(test_images_bytes)?;
+        let (test_labels, _) = parse_idx_labels_bytes(test_labels_bytes)?;
+        let image_size = rows * cols;
+
+        Ok(Self {
+            train_images,
+            train_labels,
+            test_images,
+            test_labels,
+            n_train,
+            n_test,
+            image_size,
+            n_classes: 10,
+        })
+    }
+
+    /// Try to load from IDX files, or fall back to synthetic data.
+    ///
+    /// This is the convenience method: it never fails, generating synthetic
+    /// data if real MNIST files are not found.
+    pub fn load(data_dir: &str) -> Self {
+        match Self::load_from_dir(data_dir) {
+            Ok(data) => data,
+            Err(_) => Self::synthetic(1000, 200),
         }
     }
 
@@ -503,27 +560,121 @@ fn draw_digit(image: &mut [f32], digit: u8, seed: usize) {
     }
 }
 
-/// Parse IDX image file format.
-fn parse_idx_images(path: &str) -> Vec<f32> {
-    let data = fs::read(path).unwrap();
-    let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-    assert_eq!(magic, 2051, "Invalid image magic number");
-
-    let _n_images = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-    let _n_rows = u32::from_be_bytes([data[8], data[9], data[10], data[11]]) as usize;
-    let _n_cols = u32::from_be_bytes([data[12], data[13], data[14], data[15]]) as usize;
-
-    let pixels = &data[16..];
-    pixels.iter().map(|&b| b as f32 / 255.0).collect()
+/// Read a big-endian u32 from a byte slice at the given offset.
+fn read_u32_be(data: &[u8], offset: usize) -> Result<u32, MnistError> {
+    if data.len() < offset + 4 {
+        return Err(MnistError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!("IDX file too short: need {} bytes, have {}", offset + 4, data.len()),
+        )));
+    }
+    Ok(u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ]))
 }
 
-/// Parse IDX label file format.
-fn parse_idx_labels(path: &str) -> Vec<u8> {
-    let data = fs::read(path).unwrap();
-    let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-    assert_eq!(magic, 2049, "Invalid label magic number");
+/// Parse IDX image file format (magic 2051).
+///
+/// Format: [magic:u32] [n_images:u32] [n_rows:u32] [n_cols:u32] [pixel_data:u8...]
+/// Returns `(images_f32, n_images, n_rows, n_cols)`.
+fn parse_idx_images(path: &str) -> Result<(Vec<f32>, usize, usize, usize), MnistError> {
+    let data = fs::read(path)?;
+    parse_idx_images_bytes(&data)
+}
 
-    data[8..].to_vec()
+/// Parse IDX image data from raw bytes.
+fn parse_idx_images_bytes(data: &[u8]) -> Result<(Vec<f32>, usize, usize, usize), MnistError> {
+    let magic = read_u32_be(data, 0)?;
+    if magic != 2051 {
+        return Err(MnistError::InvalidMagic {
+            expected: 2051,
+            got: magic,
+        });
+    }
+
+    let n_images = read_u32_be(data, 4)? as usize;
+    let n_rows = read_u32_be(data, 8)? as usize;
+    let n_cols = read_u32_be(data, 12)? as usize;
+    let pixel_count = n_images * n_rows * n_cols;
+    let header_size = 16;
+
+    if data.len() < header_size + pixel_count {
+        return Err(MnistError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "IDX image file truncated: expected {} pixel bytes, have {}",
+                pixel_count,
+                data.len() - header_size
+            ),
+        )));
+    }
+
+    let pixels = &data[header_size..header_size + pixel_count];
+    let images: Vec<f32> = pixels.iter().map(|&b| b as f32 / 255.0).collect();
+    Ok((images, n_images, n_rows, n_cols))
+}
+
+/// Parse IDX label file format (magic 2049).
+///
+/// Format: [magic:u32] [n_labels:u32] [label_data:u8...]
+fn parse_idx_labels(path: &str) -> Result<(Vec<u8>, usize), MnistError> {
+    let data = fs::read(path)?;
+    parse_idx_labels_bytes(&data)
+}
+
+/// Parse IDX label data from raw bytes.
+fn parse_idx_labels_bytes(data: &[u8]) -> Result<(Vec<u8>, usize), MnistError> {
+    let magic = read_u32_be(data, 0)?;
+    if magic != 2049 {
+        return Err(MnistError::InvalidMagic {
+            expected: 2049,
+            got: magic,
+        });
+    }
+
+    let n_labels = read_u32_be(data, 4)? as usize;
+    let header_size = 8;
+
+    if data.len() < header_size + n_labels {
+        return Err(MnistError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "IDX label file truncated: expected {} label bytes, have {}",
+                n_labels,
+                data.len() - header_size
+            ),
+        )));
+    }
+
+    let labels = data[header_size..header_size + n_labels].to_vec();
+    Ok((labels, n_labels))
+}
+
+/// Create an IDX image file in memory (for testing).
+///
+/// Returns the raw bytes of a valid IDX3 file.
+pub fn create_idx_images(images: &[u8], n_images: u32, n_rows: u32, n_cols: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&2051u32.to_be_bytes());
+    data.extend_from_slice(&n_images.to_be_bytes());
+    data.extend_from_slice(&n_rows.to_be_bytes());
+    data.extend_from_slice(&n_cols.to_be_bytes());
+    data.extend_from_slice(images);
+    data
+}
+
+/// Create an IDX label file in memory (for testing).
+///
+/// Returns the raw bytes of a valid IDX1 file.
+pub fn create_idx_labels(labels: &[u8], n_labels: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&2049u32.to_be_bytes());
+    data.extend_from_slice(&n_labels.to_be_bytes());
+    data.extend_from_slice(labels);
+    data
 }
 
 #[cfg(test)]
@@ -686,5 +837,308 @@ mod tests {
             "same digit with different seeds should vary, but diff={}",
             diff
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // IDX format parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_idx_images_bytes_valid() {
+        // Create a tiny 2-image, 2x3 pixel IDX file
+        let pixels: Vec<u8> = vec![0, 128, 255, 64, 192, 32, 10, 20, 30, 40, 50, 60];
+        let data = create_idx_images(&pixels, 2, 2, 3);
+        let (images, n, rows, cols) = parse_idx_images_bytes(&data).unwrap();
+
+        assert_eq!(n, 2);
+        assert_eq!(rows, 2);
+        assert_eq!(cols, 3);
+        assert_eq!(images.len(), 12);
+        // Check normalization
+        assert!((images[0] - 0.0).abs() < 1e-6); // pixel 0
+        assert!((images[1] - 128.0 / 255.0).abs() < 1e-4); // pixel 128
+        assert!((images[2] - 1.0).abs() < 1e-6); // pixel 255
+    }
+
+    #[test]
+    fn parse_idx_labels_bytes_valid() {
+        let labels: Vec<u8> = vec![0, 3, 7, 9, 1];
+        let data = create_idx_labels(&labels, 5);
+        let (parsed, n) = parse_idx_labels_bytes(&data).unwrap();
+
+        assert_eq!(n, 5);
+        assert_eq!(parsed, vec![0, 3, 7, 9, 1]);
+    }
+
+    #[test]
+    fn parse_idx_images_wrong_magic() {
+        let mut data = create_idx_images(&[0; 4], 1, 2, 2);
+        // Corrupt the magic number
+        data[3] = 0xFF;
+        let result = parse_idx_images_bytes(&data);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MnistError::InvalidMagic { expected, .. } => assert_eq!(expected, 2051),
+            other => panic!("Expected InvalidMagic, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn parse_idx_labels_wrong_magic() {
+        let mut data = create_idx_labels(&[0; 3], 3);
+        data[3] = 0xFF;
+        let result = parse_idx_labels_bytes(&data);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MnistError::InvalidMagic { expected, .. } => assert_eq!(expected, 2049),
+            other => panic!("Expected InvalidMagic, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn parse_idx_images_truncated() {
+        // Claim 10 images but only provide 1 image worth of pixels
+        let pixels = vec![0u8; 4]; // 1 image of 2x2
+        let data = create_idx_images(&pixels, 10, 2, 2);
+        let result = parse_idx_images_bytes(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_idx_labels_truncated() {
+        let labels = vec![0u8; 2];
+        let data = create_idx_labels(&labels, 100); // claim 100 but only 2
+        let result = parse_idx_labels_bytes(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_idx_too_short_for_header() {
+        // Only 3 bytes -- can't even read magic
+        let result = parse_idx_images_bytes(&[0, 0, 0]);
+        assert!(result.is_err());
+
+        let result = parse_idx_labels_bytes(&[0, 0, 0]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_idx_bytes_roundtrip() {
+        // Create small MNIST-like dataset: 5 train, 3 test, 4x4 images
+        let n_train = 5u32;
+        let n_test = 3u32;
+        let rows = 4u32;
+        let cols = 4u32;
+        let img_size = (rows * cols) as usize;
+
+        let train_pixels: Vec<u8> = (0..n_train as usize * img_size)
+            .map(|i| (i % 256) as u8)
+            .collect();
+        let train_labels: Vec<u8> = (0..n_train as usize).map(|i| (i % 10) as u8).collect();
+        let test_pixels: Vec<u8> = (0..n_test as usize * img_size)
+            .map(|i| ((i + 100) % 256) as u8)
+            .collect();
+        let test_labels: Vec<u8> = (0..n_test as usize).map(|i| ((i + 5) % 10) as u8).collect();
+
+        let train_img_bytes = create_idx_images(&train_pixels, n_train, rows, cols);
+        let train_lbl_bytes = create_idx_labels(&train_labels, n_train);
+        let test_img_bytes = create_idx_images(&test_pixels, n_test, rows, cols);
+        let test_lbl_bytes = create_idx_labels(&test_labels, n_test);
+
+        let data = MnistData::from_idx_bytes(
+            &train_img_bytes,
+            &train_lbl_bytes,
+            &test_img_bytes,
+            &test_lbl_bytes,
+        )
+        .unwrap();
+
+        assert_eq!(data.n_train, 5);
+        assert_eq!(data.n_test, 3);
+        assert_eq!(data.image_size, 16); // 4x4
+        assert_eq!(data.train_images.len(), 5 * 16);
+        assert_eq!(data.test_images.len(), 3 * 16);
+        assert_eq!(data.train_labels, train_labels);
+        assert_eq!(data.test_labels, test_labels);
+
+        // Check pixel normalization
+        assert!((data.train_images[0] - 0.0 / 255.0).abs() < 1e-6);
+        assert!((data.train_images[1] - 1.0 / 255.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn load_from_dir_with_real_idx_files() {
+        // Write proper IDX files to a temp directory and load them
+        let dir = "/tmp/qlang_test_mnist_idx_load";
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir).unwrap();
+
+        let n_train = 10u32;
+        let n_test = 5u32;
+        let rows = 28u32;
+        let cols = 28u32;
+        let img_size = (rows * cols) as usize;
+
+        // Generate pixels with some structure
+        let train_pixels: Vec<u8> = (0..n_train as usize * img_size)
+            .map(|i| (i % 256) as u8)
+            .collect();
+        let train_labels: Vec<u8> = (0..n_train as usize).map(|i| (i % 10) as u8).collect();
+        let test_pixels: Vec<u8> = (0..n_test as usize * img_size)
+            .map(|i| ((i * 7) % 256) as u8)
+            .collect();
+        let test_labels: Vec<u8> = (0..n_test as usize).map(|i| (i % 10) as u8).collect();
+
+        // Write IDX files
+        fs::write(
+            format!("{dir}/train-images-idx3-ubyte"),
+            create_idx_images(&train_pixels, n_train, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/train-labels-idx1-ubyte"),
+            create_idx_labels(&train_labels, n_train),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-images-idx3-ubyte"),
+            create_idx_images(&test_pixels, n_test, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-labels-idx1-ubyte"),
+            create_idx_labels(&test_labels, n_test),
+        )
+        .unwrap();
+
+        // Load and verify
+        let data = MnistData::load_from_dir(dir).unwrap();
+        assert_eq!(data.n_train, 10);
+        assert_eq!(data.n_test, 5);
+        assert_eq!(data.image_size, 784);
+        assert_eq!(data.train_labels.len(), 10);
+        assert_eq!(data.test_labels.len(), 5);
+        assert_eq!(data.train_images.len(), 10 * 784);
+        assert_eq!(data.test_images.len(), 5 * 784);
+
+        // Verify labels roundtripped correctly
+        for i in 0..10 {
+            assert_eq!(data.train_labels[i], (i % 10) as u8);
+        }
+
+        // Verify pixel normalization
+        assert!((data.train_images[0] - 0.0).abs() < 1e-6);
+        assert!((data.train_images[1] - 1.0 / 255.0).abs() < 1e-4);
+
+        // Clean up
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_from_dir_missing_files_returns_error() {
+        let dir = "/tmp/qlang_test_mnist_idx_missing";
+        let _ = fs::remove_dir_all(dir);
+        let result = MnistData::load_from_dir(dir);
+        assert!(result.is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_falls_back_to_synthetic() {
+        // load() should return synthetic data when directory doesn't exist
+        let data = MnistData::load("/tmp/qlang_nonexistent_dir_12345");
+        assert_eq!(data.n_train, 1000);
+        assert_eq!(data.n_test, 200);
+        assert_eq!(data.image_size, 784);
+    }
+
+    #[test]
+    fn load_uses_real_files_when_present() {
+        let dir = "/tmp/qlang_test_mnist_load_real";
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir).unwrap();
+
+        let n_train = 20u32;
+        let n_test = 8u32;
+
+        let train_pixels = vec![128u8; n_train as usize * 784];
+        let train_labels: Vec<u8> = (0..n_train as usize).map(|i| (i % 10) as u8).collect();
+        let test_pixels = vec![64u8; n_test as usize * 784];
+        let test_labels: Vec<u8> = (0..n_test as usize).map(|i| (i % 10) as u8).collect();
+
+        fs::write(
+            format!("{dir}/train-images-idx3-ubyte"),
+            create_idx_images(&train_pixels, n_train, 28, 28),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/train-labels-idx1-ubyte"),
+            create_idx_labels(&train_labels, n_train),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-images-idx3-ubyte"),
+            create_idx_images(&test_pixels, n_test, 28, 28),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-labels-idx1-ubyte"),
+            create_idx_labels(&test_labels, n_test),
+        )
+        .unwrap();
+
+        let data = MnistData::load(dir);
+        // Should use real data, not synthetic defaults (1000/200)
+        assert_eq!(data.n_train, 20);
+        assert_eq!(data.n_test, 8);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn create_idx_images_format_correctness() {
+        let pixels = vec![42u8; 6]; // 2 images of 1x3
+        let data = create_idx_images(&pixels, 2, 1, 3);
+
+        // Verify header
+        assert_eq!(read_u32_be(&data, 0).unwrap(), 2051); // magic
+        assert_eq!(read_u32_be(&data, 4).unwrap(), 2); // n_images
+        assert_eq!(read_u32_be(&data, 8).unwrap(), 1); // rows
+        assert_eq!(read_u32_be(&data, 12).unwrap(), 3); // cols
+        assert_eq!(data.len(), 16 + 6); // header + pixels
+        assert_eq!(data[16], 42); // first pixel
+    }
+
+    #[test]
+    fn create_idx_labels_format_correctness() {
+        let labels = vec![5, 3, 7];
+        let data = create_idx_labels(&labels, 3);
+
+        assert_eq!(read_u32_be(&data, 0).unwrap(), 2049); // magic
+        assert_eq!(read_u32_be(&data, 4).unwrap(), 3); // n_labels
+        assert_eq!(data.len(), 8 + 3); // header + labels
+        assert_eq!(data[8], 5);
+        assert_eq!(data[9], 3);
+        assert_eq!(data[10], 7);
+    }
+
+    #[test]
+    fn mnist_error_display() {
+        let err = MnistError::InvalidMagic {
+            expected: 2051,
+            got: 9999,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("2051"));
+        assert!(msg.contains("9999"));
+
+        let err = MnistError::FilesNotFound {
+            data_dir: "/some/dir".into(),
+            missing: vec!["train-images-idx3-ubyte".into()],
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("/some/dir"));
+        assert!(msg.contains("train-images-idx3-ubyte"));
+        assert!(msg.contains("download"));
     }
 }

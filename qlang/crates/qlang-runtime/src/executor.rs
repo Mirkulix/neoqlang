@@ -1,9 +1,14 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
+
+use rayon::prelude::*;
 
 use qlang_core::graph::{Graph, NodeId};
 use qlang_core::ops::Op;
 use qlang_core::tensor::TensorData;
 use qlang_core::verify;
+
+use crate::scheduler;
 
 /// Result of executing a QLANG graph.
 #[derive(Debug)]

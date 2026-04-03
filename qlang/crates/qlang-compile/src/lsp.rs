@@ -446,6 +446,27 @@ fn keyword_completions(prefix: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// Return the definition location (line, col) for the symbol at `(line, col)`.
+///
+/// Looks up user-defined names (inputs, nodes) and returns the line they were
+/// defined on.
+pub fn goto_definition(source: &str, line: usize, col: usize) -> Option<(usize, usize)> {
+    let word = word_at(source, line, col)?;
+
+    let names = defined_names(source);
+    for (name, def_line, _) in &names {
+        if word == *name {
+            // Return the column where the name starts on the definition line.
+            let lines = source_lines(source);
+            let def_text = lines.get(*def_line)?;
+            let col_offset = def_text.find(&word).unwrap_or(0);
+            return Some((*def_line, col_offset));
+        }
+    }
+
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

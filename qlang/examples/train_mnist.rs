@@ -16,8 +16,19 @@ fn main() {
     use std::time::Instant;
 
     // ─── 1. Load data ───
-    println!("[1] Loading synthetic MNIST (10 digit classes)...");
-    let data = MnistData::synthetic(2000, 400);
+    // Try real MNIST first (from ./data/mnist/), fall back to synthetic
+    let mnist_dir = std::env::var("MNIST_DIR").unwrap_or_else(|_| "data/mnist".to_string());
+    let data = match MnistData::load_from_dir(&mnist_dir) {
+        Ok(d) => {
+            println!("[1] Loaded REAL MNIST from '{}'", mnist_dir);
+            d
+        }
+        Err(_) => {
+            println!("[1] Real MNIST not found in '{}', using synthetic data.", mnist_dir);
+            println!("    To use real MNIST, download IDX files and set MNIST_DIR env var.");
+            MnistData::synthetic(2000, 400)
+        }
+    };
     println!("  Train: {} samples, Test: {} samples", data.n_train, data.n_test);
     println!("  Image: {}px (28×28), Classes: {}", data.image_size, data.n_classes);
 

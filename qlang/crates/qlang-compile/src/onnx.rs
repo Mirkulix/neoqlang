@@ -9,6 +9,8 @@
 //! serialization path for easy exchange with Python tooling.
 
 use std::collections::HashMap;
+use std::io::{self, Read as IoRead, Seek, SeekFrom, Write as IoWrite};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -98,6 +100,24 @@ pub enum ConversionError {
 
     #[error("edge wiring error: {0}")]
     WiringError(String),
+
+    #[error("I/O error: {0}")]
+    Io(String),
+
+    #[error("weight store error: {0}")]
+    WeightStore(String),
+
+    #[error("compression error: {0}")]
+    Compression(String),
+
+    #[error("model too large for in-memory processing: {0}")]
+    ModelTooLarge(String),
+}
+
+impl From<io::Error> for ConversionError {
+    fn from(e: io::Error) -> Self {
+        ConversionError::Io(e.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
