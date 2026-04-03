@@ -37,6 +37,16 @@ fn main() {
         return;
     }
 
+    if command == "web" {
+        let port: u16 = args.iter()
+            .position(|a| a == "--port")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8081);
+        cmd_web(port);
+        return;
+    }
+
     if args.len() < 3 {
         print_usage();
         process::exit(1);
@@ -149,6 +159,7 @@ fn print_usage() {
     eprintln!("  qlang-cli repl                                         Interactive REPL");
     eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
     eprintln!("  qlang-cli lsp                                            Start LSP server (stdin/stdout)");
+    eprintln!("  qlang-cli web      [--port 8081]                       Start web dashboard server");
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
@@ -388,6 +399,44 @@ fn cmd_asm(graph: &qlang_core::graph::Graph) {
         }
         Err(e) => {
             eprintln!("Compilation failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_web(port: u16) {
+    // Determine the web root directory (relative to the workspace root)
+    let web_root = {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        // Go up from crates/qlang-compile to the workspace root, then into web/
+        let workspace_root = std::path::Path::new(manifest)
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(std::path::Path::new("."));
+        workspace_root.join("web").to_string_lossy().to_string()
+    };
+
+    println!("QLANG Dashboard: http://localhost:{port}");
+    println!("Serving files from: {web_root}");
+    println!("WebSocket endpoint: ws://localhost:{port}/ws");
+    println!("Press Ctrl+C to stop.\n");
+
+    match qlang_runtime::web_server::WebServer::start(port, web_root) {
+        Ok(handle) => {
+            // Send a startup event
+            handle.broadcast(qlang_runtime::web_server::WebEvent::SystemLog {
+                level: "info".to_string(),
+                message: "QLANG Dashboard server started".to_string(),
+            });
+
+            // Block main thread — the server runs in a background thread
+            // but we need to keep the process alive.
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to start web server: {e}");
             process::exit(1);
         }
     }

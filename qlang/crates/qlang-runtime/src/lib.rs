@@ -38,3 +38,4 @@ pub mod gpu_runtime;
 pub mod registry;
 pub mod parallel;
 pub mod hub;
+pub mod web_server;

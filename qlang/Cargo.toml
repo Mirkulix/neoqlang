@@ -79,3 +79,11 @@ path = "examples/transformer.rs"
 [[example]]
 name = "full_pipeline"
 path = "examples/full_pipeline.rs"
+
+[[example]]
+name = "full_mnist_pipeline"
+path = "examples/full_mnist_pipeline.rs"
+
+[[example]]
+name = "onnx_import_compress"
+path = "examples/onnx_import_compress.rs"

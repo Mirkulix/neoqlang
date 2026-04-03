@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --error: #f85149;
+  --purple: #bc8cff;
+  --orange: #f0883e;
+  --node-input: #58a6ff;
+  --node-op: #3fb950;
+  --node-output: #f0883e;
+  --node-quantum: #bc8cff;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; overflow: hidden; }
+
+/* ---- Layout ---- */
+#app {
+  display: grid;
+  grid-template-rows: 48px 1fr 160px;
+  grid-template-columns: 320px 1fr 340px;
+  grid-template-areas:
+    "header header header"
+    "left   center right"
+    "bottom bottom bottom";
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* ---- Header ---- */
+#header {
+  grid-area: header;
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 10;
+}
+#header .logo { font-weight: 700; font-size: 18px; letter-spacing: 2px; color: var(--accent); }
+#header .logo span { color: var(--purple); }
+.conn-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); transition: background .3s; }
+.conn-dot.connected { background: var(--success); }
+.header-stats { margin-left: auto; display: flex; gap: 20px; font-size: 12px; color: var(--text-muted); }
+.header-stats .val { color: var(--text); font-weight: 600; }
+
+/* ---- Panels ---- */
+.panel { background: var(--card); overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); padding: 12px 14px 8px; flex-shrink: 0; }
+
+#left { grid-area: left; }
+#center { grid-area: center; }
+#right { grid-area: right; }
+#bottom { grid-area: bottom; }
+
+/* ---- Graph Panel ---- */
+#graph-svg { flex: 1; width: 100%; cursor: grab; }
+#graph-svg .node-circle { cursor: pointer; transition: r .15s, filter .15s; }
+#graph-svg .node-circle:hover { filter: brightness(1.3); }
+#graph-svg .node-circle.executing { animation: pulse-node .6s ease-in-out infinite alternate; }
+@keyframes pulse-node { from { r: 18; } to { r: 24; filter: brightness(1.5); } }
+#graph-svg .edge-line { stroke: var(--border); stroke-width: 2; }
+#graph-svg .node-label { fill: var(--text); font-size: 10px; text-anchor: middle; pointer-events: none; font-weight: 600; }
+#node-info { flex-shrink: 0; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); min-height: 60px; }
+#node-info .ni-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+
+/* ---- Activity Feed ---- */
+#center { display: flex; flex-direction: column; }
+.feed-filters { display: flex; gap: 4px; padding: 0 14px 8px; flex-shrink: 0; }
+.feed-filters button {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 12px;
+  padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all .15s;
+}
+.feed-filters button:hover, .feed-filters button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#feed { flex: 1; overflow-y: auto; padding: 0 14px 8px; scroll-behavior: smooth; }
+#feed::-webkit-scrollbar { width: 6px; }
+#feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.feed-item {
+  padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-start;
+  animation: feed-in .25s ease-out;
+}
+@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.feed-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.feed-dot.graph { background: var(--success); }
+.feed-dot.agent { background: var(--accent); }
+.feed-dot.training { background: var(--warning); }
+.feed-dot.system { background: var(--text-muted); }
+.feed-dot.error { background: var(--error); }
+.feed-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; width: 55px; }
+.feed-msg { font-size: 12px; color: var(--text); line-height: 1.4; }
+.feed-msg .tag { font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-right: 4px; font-weight: 600; }
+.tag-graph { background: rgba(63,185,80,.15); color: var(--success); }
+.tag-agent { background: rgba(88,166,255,.15); color: var(--accent); }
+.tag-training { background: rgba(210,153,34,.15); color: var(--warning); }
+.tag-system { background: rgba(139,148,158,.15); color: var(--text-muted); }
+.tag-error { background: rgba(248,81,73,.15); color: var(--error); }
+
+/* ---- Metrics Panel ---- */
+#right { gap: 0; }
+.metric-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.metric-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+#train-canvas { width: 100%; height: 120px; display: block; }
+.metric-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.metric-row .label { color: var(--text-muted); }
+.metric-row .value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-row .value.green { color: var(--success); }
+.metric-row .value.orange { color: var(--orange); }
+.metric-row .value.purple { color: var(--purple); }
+.model-list { max-height: 80px; overflow-y: auto; }
+.model-item { font-size: 11px; padding: 3px 0; color: var(--text-muted); display: flex; justify-content: space-between; }
+.model-item .name { color: var(--accent); }
+
+/* ---- REPL Panel ---- */
+#bottom {
+  display: flex; flex-direction: column; background: var(--card);
+}
+#repl-output {
+  flex: 1; overflow-y: auto; padding: 8px 14px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px;
+  color: var(--text-muted); white-space: pre-wrap; line-height: 1.5;
+}
+#repl-output::-webkit-scrollbar { width: 6px; }
+#repl-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.repl-line-input { color: var(--accent); }
+.repl-line-ok { color: var(--success); }
+.repl-line-err { color: var(--error); }
+#repl-input-row {
+  display: flex; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+#repl-input-row .prompt { padding: 8px 0 8px 14px; color: var(--purple); font-family: monospace; font-weight: 700; }
+#repl-input {
+  flex: 1; background: transparent; border: none; outline: none; color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; padding: 8px;
+}
+#repl-input::placeholder { color: var(--text-muted); }
+#repl-send {
+  background: var(--accent); color: #fff; border: none; padding: 0 16px; cursor: pointer;
+  font-weight: 600; font-size: 12px; transition: background .15s;
+}
+#repl-send:hover { background: #79b8ff; }
+
+/* ---- Scrollbar global ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ---- Responsive ---- */
+@media (max-width: 1024px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 48px 250px 1fr 280px 160px;
+    grid-template-areas: "header" "left" "center" "right" "bottom";
+  }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div id="header">
+    <div class="logo">Q<span>LANG</span></div>
+    <div class="conn-status">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span id="conn-label">Disconnected</span>
+    </div>
+    <div class="header-stats">
+      <span>Nodes <span class="val" id="stat-nodes">0</span></span>
+      <span>FLOPs <span class="val" id="stat-flops">0</span></span>
+      <span>Mem <span class="val" id="stat-mem">0 MB</span></span>
+      <span>Uptime <span class="val" id="stat-uptime">0s</span></span>
+    </div>
+  </div>
+
+  <!-- Left: Graph -->
+  <div class="panel" id="left">
+    <div class="panel-title">Graph Visualizer</div>
+    <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="node-info">Click a node to inspect</div>
+  </div>
+
+  <!-- Center: Activity Feed -->
+  <div class="panel" id="center">
+    <div class="panel-title">Activity Feed</div>
+    <div class="feed-filters">
+      <button class="active" data-filter="all">All</button>
+      <button data-filter="graph">Graph</button>
+      <button data-filter="agent">Agent</button>
+      <button data-filter="training">Training</button>
+      <button data-filter="system">System</button>
+    </div>
+    <div id="feed"></div>
+  </div>
+
+  <!-- Right: Metrics -->
+  <div class="panel" id="right">
+    <div class="panel-title">Metrics</div>
+    <div class="metric-section">
+      <h3>Training Progress</h3>
+      <canvas id="train-canvas"></canvas>
+    </div>
+    <div class="metric-section">
+      <h3>IGQK Compression</h3>
+      <div class="metric-row"><span class="label">Original</span><span class="value" id="m-orig">--</span></div>
+      <div class="metric-row"><span class="label">Compressed</span><span class="value green" id="m-comp">--</span></div>
+      <div class="metric-row"><span class="label">Ratio</span><span class="value orange" id="m-ratio">--</span></div>
+      <div class="metric-row"><span class="label">Accuracy Delta</span><span class="value purple" id="m-delta">--</span></div>
+    </div>
+    <div class="metric-section">
+      <h3>System Resources</h3>
+      <div class="metric-row"><span class="label">Nodes Executed</span><span class="value" id="m-nexec">0</span></div>
+      <div class="metric-row"><span class="label">Total FLOPs</span><span class="value" id="m-flops">0</span></div>
+      <div class="metric-row"><span class="label">Peak Memory</span><span class="value" id="m-peak">0 MB</span></div>
+    </div>
+    <div class="metric-section" style="flex:1; overflow:hidden;">
+      <h3>Model Registry</h3>
+      <div class="model-list" id="model-list"></div>
+    </div>
+  </div>
+
+  <!-- Bottom: REPL -->
+  <div class="panel" id="bottom">
+    <div class="panel-title">REPL</div>
+    <div id="repl-output">Welcome to QLANG REPL. Type .qlang code and press Enter.\n</div>
+    <div id="repl-input-row">
+      <span class="prompt">qlang&gt;</span>
+      <input id="repl-input" type="text" placeholder="graph G { x = input([784]) ... }" autocomplete="off" spellcheck="false">
+      <button id="repl-send">Run</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// =========================================================================
+//  QLANG Dashboard — Pure JS, no dependencies
+// =========================================================================
+
+(function() {
+'use strict';
+
+// --------------- State ---------------
+const state = {
+  ws: null,
+  connected: false,
+  reconnectTimer: null,
+  filter: 'all',
+  feedItems: [],
+  graphNodes: [],
+  graphEdges: [],
+  trainData: { loss: [], accuracy: [] },
+  compression: {},
+  sysResources: { nodesExec: 0, flops: 0, peakMem: 0 },
+  models: [],
+  startTime: Date.now(),
+  executingNode: null,
+};
+
+// --------------- DOM refs ---------------
+const $connDot = document.getElementById('conn-dot');
+const $connLabel = document.getElementById('conn-label');
+const $feed = document.getElementById('feed');
+const $graphSvg = document.getElementById('graph-svg');
+const $nodeInfo = document.getElementById('node-info');
+const $trainCanvas = document.getElementById('train-canvas');
+const $replOutput = document.getElementById('repl-output');
+const $replInput = document.getElementById('repl-input');
+
+// --------------- WebSocket ---------------
+function wsConnect() {
+  if (state.ws && state.ws.readyState <= 1) return;
+  try {
+    state.ws = new WebSocket('ws://localhost:8081');
+  } catch(e) { scheduleReconnect(); return; }
+
+  state.ws.onopen = function() {
+    state.connected = true;
+    $connDot.classList.add('connected');
+    $connLabel.textContent = 'Connected';
+    addFeed('system', 'WebSocket connected to ws://localhost:8081');
+  };
+
+  state.ws.onclose = function() {
+    state.connected = false;
+    $connDot.classList.remove('connected');
+    $connLabel.textContent = 'Disconnected';
+    addFeed('system', 'WebSocket disconnected');
+    scheduleReconnect();
+  };
+
+  state.ws.onerror = function() {
+    state.connected = false;
+    $connDot.classList.remove('connected');
+    $connLabel.textContent = 'Error';
+  };
+
+  state.ws.onmessage = function(ev) {
+    try { handleMessage(JSON.parse(ev.data)); } catch(e) { console.warn('Bad msg', e); }
+  };
+}
+
+function scheduleReconnect() {
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = setTimeout(wsConnect, 3000);
+}
+
+// --------------- Message handler ---------------
+function handleMessage(msg) {
+  switch(msg.type) {
+    case 'graph':
+      state.graphNodes = msg.nodes || [];
+      state.graphEdges = msg.edges || [];
+      renderGraph();
+      addFeed('graph', 'Graph updated: ' + state.graphNodes.length + ' nodes, ' + state.graphEdges.length + ' edges');
+      break;
+    case 'node_exec':
+      state.executingNode = msg.node_id;
+      state.sysResources.nodesExec++;
+      renderGraph();
+      addFeed('graph', 'Executing node <b>' + (msg.name || msg.node_id) + '</b> (' + (msg.op || '?') + ') ' + (msg.time_ms ? msg.time_ms.toFixed(2) + 'ms' : ''));
+      setTimeout(function(){ state.executingNode = null; renderGraph(); }, 500);
+      break;
+    case 'training':
+      if (msg.epoch !== undefined) {
+        state.trainData.loss.push(msg.loss);
+        state.trainData.accuracy.push(msg.accuracy);
+        renderChart();
+        addFeed('training', 'Epoch ' + msg.epoch + ' | loss=' + msg.loss.toFixed(4) + ' acc=' + (msg.accuracy * 100).toFixed(1) + '%');
+      }
+      break;
+    case 'agent':
+      addFeed('agent', '<b>' + (msg.from || '?') + '</b> &rarr; <b>' + (msg.to || '?') + '</b>: ' + (msg.content || ''));
+      break;
+    case 'compression':
+      state.compression = msg;
+      renderCompression();
+      addFeed('training', 'IGQK compression: ' + msg.original_size + ' &rarr; ' + msg.compressed_size + ' (' + msg.ratio + 'x)');
+      break;
+    case 'model_saved':
+      state.models.push({ name: msg.name, size: msg.size, time: new Date().toLocaleTimeString() });
+      renderModels();
+      addFeed('system', 'Model saved: ' + msg.name);
+      break;
+    case 'repl_result':
+      appendRepl(msg.output || '', msg.error ? 'err' : 'ok');
+      break;
+    case 'system':
+      if (msg.resources) {
+        Object.assign(state.sysResources, msg.resources);
+        renderResources();
+      }
+      if (msg.text) addFeed('system', msg.text);
+      break;
+    case 'error':
+      addFeed('error', msg.text || 'Unknown error');
+      break;
+    default:
+      addFeed('system', 'Unknown message type: ' + msg.type);
+  }
+  renderHeaderStats();
+}
+
+// --------------- Activity Feed ---------------
+function addFeed(category, html) {
+  var item = { category: category, html: html, time: new Date() };
+  state.feedItems.push(item);
+  if (state.feedItems.length > 500) state.feedItems.shift();
+  if (state.filter === 'all' || state.filter === category) {
+    appendFeedDOM(item);
+  }
+}
+
+function appendFeedDOM(item) {
+  var div = document.createElement('div');
+  div.className = 'feed-item';
+  div.dataset.category = item.category;
+  var ts = item.time.toLocaleTimeString();
+  div.innerHTML =
+    '<div class="feed-dot ' + item.category + '"></div>' +
+    '<span class="feed-time">' + ts + '</span>' +
+    '<span class="feed-msg"><span class="tag tag-' + item.category + '">' + item.category + '</span>' + item.html + '</span>';
+  $feed.appendChild(div);
+  if ($feed.children.length > 300) $feed.removeChild($feed.firstChild);
+  $feed.scrollTop = $feed.scrollHeight;
+}
+
+function rerenderFeed() {
+  $feed.innerHTML = '';
+  state.feedItems.forEach(function(item) {
+    if (state.filter === 'all' || state.filter === item.category) appendFeedDOM(item);
+  });
+}
+
+// Filter buttons
+document.querySelectorAll('.feed-filters button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.feed-filters button').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    state.filter = btn.dataset.filter;
+    rerenderFeed();
+  });
+});
+
+// --------------- Graph Rendering ---------------
+function nodeColor(type) {
+  if (!type) return '#8b949e';
+  var t = type.toLowerCase();
+  if (t === 'input') return 'var(--node-input)';
+  if (t === 'output') return 'var(--node-output)';
+  if (t === 'quantum') return 'var(--node-quantum)';
+  return 'var(--node-op)';
+}
+
+function renderGraph() {
+  var svg = $graphSvg;
+  var w = svg.clientWidth || 300;
+  var h = svg.clientHeight || 300;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  var html = '';
+
+  // Layout: topological layers
+  var nodes = state.graphNodes;
+  var edges = state.graphEdges;
+  if (!nodes.length) { svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#8b949e" font-size="12">No graph loaded</text>'; return; }
+
+  // Simple layered layout
+  var idMap = {};
+  nodes.forEach(function(n, i) { n._idx = i; idMap[n.id] = n; });
+  // Compute depth
+  var depth = {};
+  nodes.forEach(function(n){ depth[n.id] = 0; });
+  for (var pass = 0; pass < nodes.length; pass++) {
+    edges.forEach(function(e) {
+      if (depth[e.to] <= depth[e.from]) depth[e.to] = depth[e.from] + 1;
+    });
+  }
+  var maxDepth = 0;
+  nodes.forEach(function(n){ if(depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+  // Group by depth
+  var layers = [];
+  for (var d = 0; d <= maxDepth; d++) layers.push([]);
+  nodes.forEach(function(n){ layers[depth[n.id]].push(n); });
+
+  var padX = 50, padY = 40;
+  var layerH = (h - 2 * padY) / Math.max(maxDepth, 1);
+  layers.forEach(function(layer, d) {
+    var layerW = (w - 2 * padX) / Math.max(layer.length, 1);
+    layer.forEach(function(n, i) {
+      n._x = padX + layerW * i + layerW / 2;
+      n._y = padY + layerH * d + layerH / 2;
+    });
+  });
+
+  // Edges
+  edges.forEach(function(e) {
+    var from = idMap[e.from], to = idMap[e.to];
+    if (!from || !to) return;
+    html += '<line class="edge-line" x1="'+from._x+'" y1="'+from._y+'" x2="'+to._x+'" y2="'+to._y+'"/>';
+  });
+
+  // Nodes
+  nodes.forEach(function(n) {
+    var executing = state.executingNode === n.id;
+    html += '<circle class="node-circle' + (executing ? ' executing' : '') + '" cx="'+n._x+'" cy="'+n._y+'" r="18" fill="' + nodeColor(n.type) + '" data-id="'+n.id+'"/>';
+    html += '<text class="node-label" x="'+n._x+'" y="'+(n._y+4)+'">'+( n.label || n.id )+'</text>';
+  });
+
+  svg.innerHTML = html;
+
+  // Click handlers
+  svg.querySelectorAll('.node-circle').forEach(function(circle) {
+    circle.addEventListener('click', function() {
+      var nid = circle.dataset.id;
+      var node = idMap[nid];
+      if (!node) return;
+      var info = '<div class="ni-title">' + (node.label || node.id) + ' (' + (node.op || node.type || '?') + ')</div>';
+      if (node.shape) info += 'Shape: ' + JSON.stringify(node.shape) + '<br>';
+      if (node.time_ms !== undefined) info += 'Exec time: ' + node.time_ms.toFixed(2) + 'ms<br>';
+      if (node.values) info += 'Values: [' + node.values.slice(0, 8).join(', ') + (node.values.length > 8 ? '...' : '') + ']';
+      $nodeInfo.innerHTML = info;
+    });
+  });
+}
+
+// --------------- Chart ---------------
+function renderChart() {
+  var canvas = $trainCanvas;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+
+  ctx.clearRect(0, 0, W, H);
+  var loss = state.trainData.loss;
+  var acc = state.trainData.accuracy;
+  if (!loss.length) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No training data yet', W / 2, H / 2);
+    return;
+  }
+
+  var pad = { l: 36, r: 36, t: 10, b: 18 };
+  var cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  var n = loss.length;
+  var maxLoss = Math.max.apply(null, loss) * 1.1 || 1;
+
+  // Grid
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var gy = pad.t + ch * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + cw, gy); ctx.stroke();
+  }
+
+  // Loss line
+  ctx.strokeStyle = '#f85149';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i = 0; i < n; i++) {
+    var x = pad.l + (i / Math.max(n - 1, 1)) * cw;
+    var y = pad.t + (1 - loss[i] / maxLoss) * ch;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Accuracy line
+  ctx.strokeStyle = '#3fb950';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i = 0; i < n; i++) {
+    var x = pad.l + (i / Math.max(n - 1, 1)) * cw;
+    var y = pad.t + (1 - acc[i]) * ch;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(maxLoss.toFixed(2), pad.l - 4, pad.t + 8);
+  ctx.fillText('0', pad.l - 4, pad.t + ch + 4);
+  ctx.textAlign = 'left';
+  ctx.fillText('1.0', pad.l + cw + 4, pad.t + 8);
+  ctx.fillText('0', pad.l + cw + 4, pad.t + ch + 4);
+  ctx.textAlign = 'center';
+  ctx.fillText('Epoch 1', pad.l, pad.t + ch + 14);
+  ctx.fillText('Epoch ' + n, pad.l + cw, pad.t + ch + 14);
+
+  // Legend
+  ctx.fillStyle = '#f85149'; ctx.fillRect(pad.l, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.textAlign = 'left'; ctx.fillText('Loss', pad.l + 12, pad.t + 4);
+  ctx.fillStyle = '#3fb950'; ctx.fillRect(pad.l + 50, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.fillText('Accuracy', pad.l + 62, pad.t + 4);
+}
+
+// --------------- Compression Metrics ---------------
+function renderCompression() {
+  var c = state.compression;
+  document.getElementById('m-orig').textContent = c.original_size || '--';
+  document.getElementById('m-comp').textContent = c.compressed_size || '--';
+  document.getElementById('m-ratio').textContent = c.ratio ? c.ratio + 'x' : '--';
+  document.getElementById('m-delta').textContent = c.accuracy_delta !== undefined ? (c.accuracy_delta > 0 ? '+' : '') + c.accuracy_delta + '%' : '--';
+}
+
+// --------------- System Resources ---------------
+function renderResources() {
+  var r = state.sysResources;
+  document.getElementById('m-nexec').textContent = r.nodesExec;
+  document.getElementById('m-flops').textContent = formatNumber(r.flops);
+  document.getElementById('m-peak').textContent = (r.peakMem || 0) + ' MB';
+}
+
+// --------------- Models ---------------
+function renderModels() {
+  var el = document.getElementById('model-list');
+  el.innerHTML = '';
+  state.models.forEach(function(m) {
+    el.innerHTML += '<div class="model-item"><span class="name">' + m.name + '</span><span>' + m.size + ' &middot; ' + m.time + '</span></div>';
+  });
+}
+
+// --------------- Header Stats ---------------
+function renderHeaderStats() {
+  document.getElementById('stat-nodes').textContent = state.graphNodes.length;
+  document.getElementById('stat-flops').textContent = formatNumber(state.sysResources.flops);
+  document.getElementById('stat-mem').textContent = (state.sysResources.peakMem || 0) + ' MB';
+}
+
+function updateUptime() {
+  var s = Math.floor((Date.now() - state.startTime) / 1000);
+  var m = Math.floor(s / 60); s = s % 60;
+  var h = Math.floor(m / 60); m = m % 60;
+  document.getElementById('stat-uptime').textContent = (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+}
+setInterval(updateUptime, 1000);
+
+function formatNumber(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+// --------------- REPL ---------------
+function sendRepl() {
+  var code = $replInput.value.trim();
+  if (!code) return;
+  appendRepl('qlang> ' + code, 'input');
+  $replInput.value = '';
+  if (state.connected) {
+    state.ws.send(JSON.stringify({ type: 'repl', code: code }));
+  } else {
+    appendRepl('Error: not connected to server', 'err');
+  }
+}
+
+function appendRepl(text, kind) {
+  var span = document.createElement('div');
+  span.className = 'repl-line-' + (kind || 'ok');
+  span.textContent = text;
+  $replOutput.appendChild(span);
+  $replOutput.scrollTop = $replOutput.scrollHeight;
+}
+
+$replInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') sendRepl(); });
+document.getElementById('repl-send').addEventListener('click', sendRepl);
+
+// --------------- Init ---------------
+renderChart();
+wsConnect();
+
+// Resize handler
+window.addEventListener('resize', function() { renderGraph(); renderChart(); });
+
+// Expose for external use (e.g., demo mode)
+window.qlangDashboard = {
+  state: state,
+  handleMessage: handleMessage,
+  addFeed: addFeed,
+  renderGraph: renderGraph,
+  renderChart: renderChart,
+};
+
+})();
+</script>
+</body>
+</html>
