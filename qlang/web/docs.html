@@ -4,16 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>QLANG - Dokumentation</title>
-<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<!-- Zero external dependencies -->
 <style>
 :root { --bg:#000; --surface:#0d1117; --card:#161b22; --border:#21262d; --text:#e6edf3; --dim:#7d8590; --blue:#2563EB; --blue-l:#58a6ff; --green:#3fb950; --orange:#f97316; --purple:#bc8cff; --red:#f85149; }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:'Fira Sans',sans-serif;font-size:15px;line-height:1.7}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.7}
 a{color:var(--blue-l);text-decoration:none}
 a:hover{text-decoration:underline}
 
 .top-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
-.top-bar .brand{font-family:'Fira Code',monospace;font-size:18px;font-weight:600;color:var(--blue-l);letter-spacing:2px}
+.top-bar .brand{font-family:'SF Mono','Menlo','Consolas',monospace;font-size:18px;font-weight:600;color:var(--blue-l);letter-spacing:2px}
 .top-bar .sep{width:1px;height:24px;background:var(--border)}
 .top-bar nav{display:flex;gap:8px}
 .top-bar nav a{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--dim);transition:all 0.15s}
@@ -39,8 +39,8 @@ p{margin-bottom:12px;color:var(--text)}
 ul,ol{margin:0 0 16px 20px;color:var(--text)}
 li{margin-bottom:6px}
 
-code{font-family:'Fira Code',monospace;font-size:13px;background:var(--card);padding:2px 6px;border-radius:4px;color:var(--orange)}
-pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0 20px;overflow-x:auto;font-family:'Fira Code',monospace;font-size:13px;line-height:1.6;color:var(--text)}
+code{font-family:'SF Mono','Menlo','Consolas',monospace;font-size:13px;background:var(--card);padding:2px 6px;border-radius:4px;color:var(--orange)}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0 20px;overflow-x:auto;font-family:'SF Mono','Menlo','Consolas',monospace;font-size:13px;line-height:1.6;color:var(--text)}
 
 .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
 .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px}
@@ -61,7 +61,7 @@ td{padding:8px 12px;border:1px solid var(--border)}
 .badge.no{background:rgba(248,81,73,0.15);color:var(--red)}
 .badge.soon{background:rgba(210,153,34,0.15);color:var(--yellow)}
 
-.diagram{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin:16px 0;font-family:'Fira Code',monospace;font-size:12px;line-height:1.8;color:var(--dim);overflow-x:auto;white-space:pre}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin:16px 0;font-family:'SF Mono','Menlo','Consolas',monospace;font-size:12px;line-height:1.8;color:var(--dim);overflow-x:auto;white-space:pre}
 .diagram .hl{color:var(--blue-l)}
 .diagram .gr{color:var(--green)}
 .diagram .or{color:var(--orange)}
