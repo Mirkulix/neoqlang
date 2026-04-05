@@ -44,6 +44,8 @@ pub mod registry;
 pub mod parallel;
 pub mod hub;
 pub mod ollama;
+pub mod providers;
+pub mod orchestrator;
 pub mod distributed_train;
 pub mod tokenizer;
 pub mod transformer_train;

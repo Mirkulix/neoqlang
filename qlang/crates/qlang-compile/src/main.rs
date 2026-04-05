@@ -107,6 +107,11 @@ fn main() {
         return;
     }
 
+    if command == "orchestrate" {
+        cmd_orchestrate(&args[2..]);
+        return;
+    }
+
     if command == "devices" {
         cmd_devices();
         return;
@@ -250,6 +255,8 @@ fn print_usage() {
     eprintln!("  qlang-cli train-lm --data <text.txt> [options]           Train a transformer language model");
     eprintln!("  qlang-cli swarm-train [--data FILE] [--population 10] [--generations 5] [--quick]");
     eprintln!("      --vocab-size 1000 --d-model 128 --layers 4 --heads 4 --epochs 10 --seq-len 128");
+    eprintln!("  qlang-cli orchestrate \"task\" [--budget 0.10] [--quality 0.9] [--models 3]");
+    eprintln!("                                                          Multi-model orchestration");
     eprintln!("  qlang-cli devices                                      List available compute devices");
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
@@ -2518,6 +2525,122 @@ fn cmd_swarm_train(args: &[String]) {
     println!("\n  Top {} models: {} total params ({:.1} KB compressed with IGQK)",
         show_count, total_params, total_params as f64 * 4.0 / 1024.0 / 16.0);
     println!("  Backend: {}", qlang_runtime::accel::backend_name());
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrate command
+// ---------------------------------------------------------------------------
+
+fn cmd_orchestrate(args: &[String]) {
+    // Collect all args that are not flags into the prompt
+    let prompt: String = args.iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if prompt.is_empty() {
+        eprintln!("Usage: qlang-cli orchestrate \"your task here\" [--budget 0.10] [--quality 0.9] [--models 3]");
+        return;
+    }
+
+    let budget_cost = args
+        .iter()
+        .position(|a| a == "--budget")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.0); // 0 = local only
+    let quality = args
+        .iter()
+        .position(|a| a == "--quality")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.8);
+    let max_models = args
+        .iter()
+        .position(|a| a == "--models")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1);
+
+    println!("=== QLANG Orchestrator ===");
+    println!("Task: {}", prompt);
+    println!(
+        "Budget: ${:.2}, Quality: {:.0}%, Max Models: {}",
+        budget_cost,
+        quality * 100.0,
+        max_models
+    );
+    println!();
+
+    // Setup registry
+    let mut registry = qlang_runtime::providers::ProviderRegistry::new(budget_cost);
+    registry.discover_all();
+
+    let models = registry.list_all_models();
+    println!("Available models: {}", models.len());
+    for (pid, mid, name, cost) in &models {
+        println!("  {}/{} ({}) ${:.2}/1M", pid, mid, name, cost);
+    }
+    println!();
+
+    // Create task
+    let task = qlang_runtime::orchestrator::Task {
+        id: "cli-task".into(),
+        description: prompt.clone(),
+        task_type: qlang_runtime::orchestrator::TaskType::TextGeneration,
+        data_class: qlang_runtime::providers::DataClass::Internal,
+        budget: qlang_runtime::orchestrator::Budget {
+            max_cost: budget_cost,
+            max_time_ms: 120_000,
+            max_models,
+        },
+        quality_target: quality,
+    };
+
+    // Plan and execute
+    let mut orchestrator = qlang_runtime::orchestrator::Orchestrator::new();
+    let plan = orchestrator.plan(&task);
+    println!("Plan: {:?} mode, {} steps", plan.mode, plan.steps.len());
+    for step in &plan.steps {
+        println!(
+            "  Step {}: {} (prefer: {})",
+            step.step_id, step.role, step.provider_preference
+        );
+    }
+    println!();
+
+    match orchestrator.execute(&plan, &task, &mut registry) {
+        Ok(result) => {
+            println!("=== Result ===");
+            println!("{}", result.final_output);
+            println!();
+            println!("--- Stats ---");
+            println!("Models used: {}", result.models_used.join(", "));
+            println!("Total cost: ${:.4}", result.total_cost);
+            println!("Total time: {}ms", result.total_latency_ms);
+            println!("Steps: {}", result.steps.len());
+        }
+        Err(e) => {
+            eprintln!("Orchestration failed: {}", e);
+        }
+    }
+
+    // Print cost summary
+    println!();
+    println!("Cost: {}", registry.cost_summary());
+
+    // Audit log
+    println!();
+    println!("--- Audit Log ---");
+    for d in orchestrator.audit_log() {
+        println!(
+            "  [{}] {}: {} {}",
+            d.timestamp_ms,
+            d.action,
+            d.reason,
+            d.model_selected.as_deref().unwrap_or("")
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
