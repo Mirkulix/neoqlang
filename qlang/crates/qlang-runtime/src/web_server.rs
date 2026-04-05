@@ -765,6 +765,100 @@ fn handle_websocket(
                                 let epochs_per = msg["epochs_per"].as_u64().unwrap_or(3) as usize;
                                 run_evolution(population, generations, epochs_per, clients);
                             }
+                            Some("exec") => {
+                                let code = msg["code"].as_str().unwrap_or("");
+                                eprintln!("[web_server] exec: {} bytes of code", code.len());
+
+                                let code = code.to_string();
+                                let clients = Arc::clone(clients);
+
+                                // Run in background thread to not block WebSocket
+                                thread::spawn(move || {
+                                    let start = std::time::Instant::now();
+
+                                    // Try bytecode VM first, fall back to unified interpreter
+                                    let result = match crate::bytecode::run_bytecode(&code) {
+                                        Ok((_value, output)) => {
+                                            let elapsed = start.elapsed();
+                                            format!(
+                                                r#"{{"type":"exec_result","output":{},"error":null,"backend":"bytecode","time_ms":{}}}"#,
+                                                serde_json::to_string(&output).unwrap_or_else(|_| "[]".into()),
+                                                elapsed.as_millis()
+                                            )
+                                        }
+                                        Err(_) => {
+                                            // Fall back to unified (supports graphs + imports)
+                                            match crate::unified::execute_unified(&code) {
+                                                Ok(unified_result) => {
+                                                    let elapsed = start.elapsed();
+                                                    format!(
+                                                        r#"{{"type":"exec_result","output":{},"error":null,"backend":"interpreter","time_ms":{}}}"#,
+                                                        serde_json::to_string(&unified_result.output).unwrap_or_else(|_| "[]".into()),
+                                                        elapsed.as_millis()
+                                                    )
+                                                }
+                                                Err(e) => {
+                                                    format!(
+                                                        r#"{{"type":"exec_result","output":[],"error":"{}","backend":"interpreter","time_ms":0}}"#,
+                                                        json_escape(&format!("{}", e))
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    };
+
+                                    broadcast_to_clients(&clients, &result);
+                                });
+                            }
+                            Some("repl") => {
+                                let code = msg["code"].as_str().unwrap_or("");
+                                // Execute single line/expression
+                                let code = code.to_string();
+                                let clients = Arc::clone(clients);
+
+                                thread::spawn(move || {
+                                    match crate::vm::run_qlang_script(&code) {
+                                        Ok((value, output)) => {
+                                            let mut lines = output;
+                                            // Show the value if it's not null
+                                            let val_str = format!("{}", value);
+                                            if val_str != "null" && val_str != "()" {
+                                                lines.push(val_str);
+                                            }
+                                            let response = format!(
+                                                r#"{{"type":"repl_result","output":"{}","error":null}}"#,
+                                                json_escape(&lines.join("\n"))
+                                            );
+                                            broadcast_to_clients(&clients, &response);
+                                        }
+                                        Err(e) => {
+                                            let response = format!(
+                                                r#"{{"type":"repl_result","output":"","error":"{}"}}"#,
+                                                json_escape(&format!("{}", e))
+                                            );
+                                            broadcast_to_clients(&clients, &response);
+                                        }
+                                    }
+                                });
+                            }
+                            Some("start_swarm") => {
+                                let population = msg["population"].as_u64().unwrap_or(6) as usize;
+                                let generations = msg["generations"].as_u64().unwrap_or(3) as usize;
+                                let data_source = msg["data"].as_str().unwrap_or("quick").to_string();
+                                eprintln!("[web_server] -> start_swarm (pop={}, gen={}, data={})", population, generations, data_source);
+                                run_swarm_training(population, generations, &data_source, clients);
+                            }
+                            Some("start_autonomous") => {
+                                let task = msg["task"].as_str().unwrap_or("Build a digit classifier").to_string();
+                                let model = msg["model"].as_str().unwrap_or("deepseek-r1:1.5b").to_string();
+                                let target_acc = msg["target_accuracy"].as_f64().unwrap_or(0.95) as f32;
+                                let max_iterations = msg["max_iterations"].as_u64().unwrap_or(5) as usize;
+                                let dataset = msg["dataset"].as_str().unwrap_or("synthetic").to_string();
+
+                                eprintln!("[autonomous] Starting: task='{}', model={}, target={:.0}%, max_iter={}", task, model, target_acc*100.0, max_iterations);
+
+                                run_autonomous_loop(&task, &model, target_acc, max_iterations, &dataset, clients);
+                            }
                             _ => {}
                         }
                     }
@@ -1177,6 +1271,516 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
         eprintln!("[evolution] ==============================");
         eprintln!("[evolution] Evolution complete! Best: {}x{}, acc={:.1}%", best_h1, best_h2, final_acc * 100.0);
         eprintln!("[evolution] ==============================");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Autonomous AI feedback loop
+// ---------------------------------------------------------------------------
+
+/// Run an autonomous AI feedback loop that self-corrects until target accuracy.
+///
+/// 1. Ask AI to design (or improve) a neural network architecture
+/// 2. Build and train the model
+/// 3. Evaluate accuracy and compression
+/// 4. If target reached, stop and summarize
+/// 5. Otherwise, ask AI for feedback and repeat
+fn run_autonomous_loop(
+    task: &str,
+    model: &str,
+    target_accuracy: f32,
+    max_iterations: usize,
+    dataset: &str,
+    clients: &Clients,
+) {
+    let clients = Arc::clone(clients);
+    let task = task.to_string();
+    let model = model.to_string();
+    let dataset = dataset.to_string();
+
+    thread::spawn(move || {
+        let ollama = crate::ollama::OllamaClient::from_env();
+
+        // Load data once
+        use crate::mnist::MnistData;
+
+        let data = if dataset == "mnist" {
+            MnistData::download_and_load("data/mnist").unwrap_or_else(|_| MnistData::synthetic(2000, 500))
+        } else {
+            MnistData::synthetic(2000, 500)
+        };
+
+        let mut best_accuracy: f32 = 0.0;
+        let mut best_config = (128usize, 64usize); // (hidden1, hidden2)
+        let mut iteration_history: Vec<String> = Vec::new();
+
+        eprintln!("[autonomous] ==============================");
+        eprintln!("[autonomous] Starting autonomous AI loop");
+        eprintln!("[autonomous] Task: {}", task);
+        eprintln!("[autonomous] Target: {:.0}%", target_accuracy * 100.0);
+        eprintln!("[autonomous] Max iterations: {}", max_iterations);
+        eprintln!("[autonomous] ==============================");
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"autonomous_status","phase":"start","iteration":0,"max_iterations":{},"task":"{}","target_accuracy":{}}}"#,
+            max_iterations, json_escape(&task), target_accuracy
+        ));
+
+        for iteration in 1..=max_iterations {
+            eprintln!("[autonomous] === Iteration {}/{} ===", iteration, max_iterations);
+
+            // === STEP 1: Ask AI to design (or improve) architecture ===
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_status","phase":"designing","iteration":{},"max_iterations":{}}}"#,
+                iteration, max_iterations
+            ));
+
+            let design_prompt = if iteration == 1 {
+                format!(
+                    "You are a neural network architect. Task: {}. Design a small MLP for classification (784 inputs, 10 outputs). Reply with ONLY JSON: {{\"hidden1\": N, \"hidden2\": N, \"epochs\": N, \"learning_rate\": 0.1}}",
+                    task
+                )
+            } else {
+                format!(
+                    "You are a neural network architect. Task: {}. Previous attempts:\n{}\nBest so far: {:.1}% accuracy with hidden1={}, hidden2={}. Target: {:.0}%. Suggest a BETTER architecture. Reply with ONLY JSON: {{\"hidden1\": N, \"hidden2\": N, \"epochs\": N, \"learning_rate\": 0.1}}",
+                    task,
+                    iteration_history.join("\n"),
+                    best_accuracy * 100.0,
+                    best_config.0, best_config.1,
+                    target_accuracy * 100.0
+                )
+            };
+
+            eprintln!("[autonomous] Asking {} for architecture design...", model);
+
+            let design = ollama.generate(&model, &design_prompt, Some("Output valid JSON only."))
+                .unwrap_or_else(|_| r#"{"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}"#.to_string());
+
+            eprintln!("[autonomous] AI response: {}", &design[..design.len().min(120)]);
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_design","iteration":{},"response":"{}"}}"#,
+                iteration, json_escape(&design)
+            ));
+
+            // Parse design
+            let json_str = extract_json_from_response(&design);
+            let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                .unwrap_or(serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}));
+
+            let h1 = parsed["hidden1"].as_u64().unwrap_or(128).min(512).max(16) as usize;
+            let h2 = parsed["hidden2"].as_u64().unwrap_or(64).min(256).max(8) as usize;
+            let epochs = parsed["epochs"].as_u64().unwrap_or(10).min(30).max(3) as usize;
+            let lr = parsed["learning_rate"].as_f64().unwrap_or(0.1).min(1.0).max(0.001) as f32;
+
+            eprintln!("[autonomous] Design: 784->{}->{}->10, {} epochs, lr={}", h1, h2, epochs, lr);
+
+            // === STEP 2: Build and train ===
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_status","phase":"training","iteration":{},"max_iterations":{},"config":{{"h1":{},"h2":{},"epochs":{},"lr":{}}}}}"#,
+                iteration, max_iterations, h1, h2, epochs, lr
+            ));
+
+            let mut model_nn = MlpWeights3::new(784, h1, h2, 10);
+            let mut current_lr = lr;
+
+            eprintln!("[autonomous] Training model...");
+
+            for epoch in 0..epochs {
+                if epoch > 0 && epoch % 10 == 0 { current_lr *= 0.95; }
+                let n_batches = data.n_train / 64;
+                let mut epoch_loss = 0.0f32;
+                for b in 0..n_batches {
+                    let (x, y) = data.train_batch(b * 64, 64);
+                    epoch_loss += model_nn.train_step_backprop(x, y, current_lr);
+                }
+                epoch_loss /= n_batches.max(1) as f32;
+
+                let probs = model_nn.forward(&data.train_images);
+                let acc = model_nn.accuracy(&probs, &data.train_labels);
+
+                broadcast_to_clients(&clients, &format!(
+                    r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
+                    epoch + 1, epoch_loss, acc
+                ));
+            }
+
+            // === STEP 3: Evaluate ===
+            let test_probs = model_nn.forward(&data.test_images);
+            let test_acc = model_nn.accuracy(&test_probs, &data.test_labels);
+
+            // Compress
+            let compressed = model_nn.compress_ternary();
+            let comp_probs = compressed.forward(&data.test_images);
+            let comp_acc = compressed.accuracy(&comp_probs, &data.test_labels);
+
+            let total_params = model_nn.param_count();
+            let original_kb = total_params as f64 * 4.0 / 1024.0;
+            let weight_count = model_nn.w1.len() + model_nn.w2.len() + model_nn.w3.len();
+            let compressed_kb = ((weight_count * 2 + 7) / 8 + (model_nn.b1.len() + model_nn.b2.len() + model_nn.b3.len()) * 4) as f64 / 1024.0;
+            let ratio = original_kb / compressed_kb;
+
+            eprintln!("[autonomous] Result: test_acc={:.1}%, comp_acc={:.1}%, ratio={:.1}x", test_acc*100.0, comp_acc*100.0, ratio);
+
+            let result_summary = format!("Iter {}: 784->{}->{}->10, acc={:.1}%, comp={:.1}%, ratio={:.1}x",
+                iteration, h1, h2, test_acc*100.0, comp_acc*100.0, ratio);
+            iteration_history.push(result_summary.clone());
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_result","iteration":{},"test_accuracy":{},"compressed_accuracy":{},"compression_ratio":{},"hidden1":{},"hidden2":{},"params":{},"original_kb":{:.1},"compressed_kb":{:.1}}}"#,
+                iteration, test_acc, comp_acc, ratio, h1, h2, total_params, original_kb, compressed_kb
+            ));
+
+            // Track best
+            if test_acc > best_accuracy {
+                best_accuracy = test_acc;
+                best_config = (h1, h2);
+                eprintln!("[autonomous] New best accuracy: {:.1}%", best_accuracy * 100.0);
+
+                // Store best model for interactive testing
+                let model_store = TRAINED_MODEL.get_or_init(|| std::sync::Mutex::new(None));
+                *model_store.lock().unwrap() = Some(model_nn.clone());
+                broadcast_to_clients(&clients, r#"{"type":"model_ready"}"#);
+            }
+
+            // === STEP 4: Check if target reached ===
+            if test_acc >= target_accuracy {
+                eprintln!("[autonomous] TARGET REACHED at iteration {}: {:.1}%", iteration, test_acc * 100.0);
+
+                broadcast_to_clients(&clients, &format!(
+                    r#"{{"type":"autonomous_status","phase":"success","iteration":{},"max_iterations":{},"accuracy":{},"target":{}}}"#,
+                    iteration, max_iterations, test_acc, target_accuracy
+                ));
+
+                // Ask AI for final summary
+                let summary_prompt = format!(
+                    "A neural network was trained for: {}. After {} iterations, the best result was {:.1}% accuracy (target was {:.0}%). Architecture: 784->{}->{}->10. Compressed {:.1}x. Summarize the result in 2 sentences.",
+                    task, iteration, best_accuracy*100.0, target_accuracy*100.0, best_config.0, best_config.1, ratio
+                );
+                eprintln!("[autonomous] Asking AI for final summary...");
+                let summary = ollama.generate(&model, &summary_prompt, None).unwrap_or_default();
+                broadcast_to_clients(&clients, &format!(
+                    r#"{{"type":"autonomous_summary","success":true,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
+                    json_escape(&summary), iteration, best_accuracy, best_config.0, best_config.1
+                ));
+
+                eprintln!("[autonomous] SUCCESS after {} iterations: {:.1}%", iteration, best_accuracy*100.0);
+                eprintln!("[autonomous] ==============================");
+                return;
+            }
+
+            // === STEP 5: Ask AI for feedback and adjustments ===
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_status","phase":"reflecting","iteration":{},"max_iterations":{}}}"#,
+                iteration, max_iterations
+            ));
+
+            let feedback_prompt = format!(
+                "Training result: 784->{}->{}->10 achieved {:.1}% accuracy (target: {:.0}%). Compression: {:.1}x. What went wrong? How should the architecture change? Be brief (1-2 sentences).",
+                h1, h2, test_acc*100.0, target_accuracy*100.0, ratio
+            );
+            eprintln!("[autonomous] Asking AI for feedback...");
+            let feedback = ollama.generate(&model, &feedback_prompt, None).unwrap_or_default();
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"autonomous_feedback","iteration":{},"feedback":"{}"}}"#,
+                iteration, json_escape(&feedback)
+            ));
+
+            eprintln!("[autonomous] Feedback: {}", &feedback[..feedback.len().min(100)]);
+        }
+
+        // Max iterations reached without hitting target
+        eprintln!("[autonomous] MAX ITERATIONS reached. Best: {:.1}%", best_accuracy*100.0);
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"autonomous_status","phase":"max_reached","iteration":{},"max_iterations":{},"best_accuracy":{}}}"#,
+            max_iterations, max_iterations, best_accuracy
+        ));
+
+        let summary_prompt = format!(
+            "A neural network was trained for: {}. After {} iterations, the best result was {:.1}% accuracy (target was {:.0}%). Best architecture: 784->{}->{}->10. The target was not reached. Summarize what happened and suggest next steps. 2-3 sentences.",
+            task, max_iterations, best_accuracy*100.0, target_accuracy*100.0, best_config.0, best_config.1
+        );
+        eprintln!("[autonomous] Asking AI for final summary...");
+        let summary = ollama.generate(&model, &summary_prompt, None).unwrap_or_default();
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"autonomous_summary","success":false,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
+            json_escape(&summary), max_iterations, best_accuracy, best_config.0, best_config.1
+        ));
+
+        eprintln!("[autonomous] ==============================");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Swarm training (evolutionary LM architecture search)
+// ---------------------------------------------------------------------------
+
+/// Run swarm training in a background thread, broadcasting status to WebSocket clients.
+fn run_swarm_training(population: usize, generations: usize, data_source: &str, clients: &Clients) {
+    let clients = Arc::clone(clients);
+    let data_source = data_source.to_string();
+
+    thread::spawn(move || {
+        eprintln!("[swarm] ==============================");
+        eprintln!("[swarm] Starting swarm training: pop={}, gen={}, data={}", population, generations, data_source);
+        eprintln!("[swarm] ==============================");
+
+        let builtin_text = "The quick brown fox jumps over the lazy dog. \
+            Machine learning models can recognize patterns in data. \
+            Neural networks are inspired by the human brain. \
+            Artificial intelligence is transforming how we work and live. \
+            Deep learning uses multiple layers to extract features. \
+            Natural language processing enables computers to understand text. \
+            Reinforcement learning teaches agents through trial and error. \
+            Computer vision allows machines to interpret images. \
+            Transfer learning reuses knowledge from one task to another. \
+            Generative models can create new content from learned patterns. \
+            The future of AI depends on responsible development. \
+            Small specialized models can outperform large general models on specific tasks. \
+            Evolution finds optimal solutions through selection and mutation. \
+            Compression reduces model size while preserving accuracy. \
+            Binary protocols are faster than text-based communication. \
+            Quantum computing may revolutionize optimization problems. \
+            Edge deployment brings AI closer to where data is generated. \
+            Federated learning trains models without centralizing data. \
+            Attention mechanisms allow models to focus on relevant information. \
+            Tokenization converts text into numerical representations.";
+
+        let text = if data_source == "quick" {
+            builtin_text.to_string()
+        } else {
+            std::fs::read_to_string(&data_source).unwrap_or_else(|e| {
+                eprintln!("[swarm] Cannot read {}: {}, using built-in text", data_source, e);
+                builtin_text.to_string()
+            })
+        };
+
+        // Step 1: Train tokenizer
+        broadcast_to_clients(&clients, r#"{"type":"swarm_status","phase":"tokenizer"}"#);
+        eprintln!("[swarm] Training tokenizer...");
+
+        use crate::tokenizer::BpeTokenizer;
+        use crate::transformer_train::{TransformerConfig, MiniGPT};
+
+        let tokenizer = BpeTokenizer::train(&text, 500);
+        let tokens = tokenizer.encode(&text);
+        let vocab_size = tokenizer.vocab_size();
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"swarm_status","phase":"tokenizer","vocab_size":{}}}"#,
+            vocab_size
+        ));
+        eprintln!("[swarm] Tokenizer ready: vocab={}, tokens={}", vocab_size, tokens.len());
+
+        if tokens.len() < 4 {
+            broadcast_to_clients(&clients, r#"{"type":"swarm_status","phase":"error","message":"Text too short after tokenization"}"#);
+            return;
+        }
+
+        // Step 2: Create population
+        let architectures: [(usize, usize, usize); 10] = [
+            (32, 2, 2),   // tiny
+            (48, 3, 2),   // small-wide
+            (32, 2, 4),   // small-deep
+            (64, 4, 2),   // medium-wide
+            (64, 4, 3),   // medium
+            (48, 3, 4),   // medium-deep
+            (96, 4, 2),   // large-wide
+            (64, 4, 4),   // large-balanced
+            (32, 2, 6),   // very-deep
+            (128, 4, 2),  // widest
+        ];
+
+        struct SwarmMember {
+            config: TransformerConfig,
+            model: MiniGPT,
+            fitness: f32,
+        }
+
+        let mut swarm: Vec<SwarmMember> = Vec::new();
+
+        for i in 0..population {
+            let arch_idx = i % architectures.len();
+            let (d_model, n_heads, n_layers) = architectures[arch_idx];
+
+            let config = TransformerConfig {
+                vocab_size,
+                d_model,
+                n_heads,
+                n_layers,
+                max_seq_len: 64,
+                dropout: 0.0,
+                use_rms_norm: true,
+                use_silu: true,
+            };
+
+            let model = MiniGPT::new(config.clone());
+            let params = model.param_count();
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"swarm_model","id":{},"d_model":{},"layers":{},"params":{}}}"#,
+                i, d_model, n_layers, params
+            ));
+
+            swarm.push(SwarmMember { config, model, fitness: f32::MAX });
+        }
+
+        // Step 3: Evolution loop
+        let seq_len: usize = 32;
+        let epochs_per_gen: usize = 3;
+
+        for gen in 0..generations {
+            eprintln!("[swarm] Generation {}/{}", gen + 1, generations);
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"swarm_generation","gen":{},"total":{}}}"#,
+                gen + 1, generations
+            ));
+
+            // Train each model briefly
+            for i in 0..swarm.len() {
+                let mut total_loss = 0.0f32;
+                let mut count = 0u32;
+
+                for epoch in 0..epochs_per_gen {
+                    let max_start = tokens.len().saturating_sub(seq_len + 1);
+                    if max_start == 0 { continue; }
+
+                    let start = (gen * 7 + i * 13 + epoch * 17) % max_start.max(1);
+                    let end = std::cmp::min(start + seq_len + 1, tokens.len());
+                    let window = &tokens[start..end];
+
+                    if window.len() > 1 {
+                        let loss = swarm[i].model.train_step(window, 0.001);
+                        total_loss += loss;
+                        count += 1;
+                    }
+                }
+
+                swarm[i].fitness = if count > 0 { total_loss / count as f32 } else { f32::MAX };
+
+                // Generate a short sample
+                let sample = if swarm[i].fitness < 50.0 && !tokens.is_empty() {
+                    let prompt_end = std::cmp::min(3, tokens.len());
+                    let prompt = &tokens[0..prompt_end];
+                    let generated = swarm[i].model.generate(prompt, 10, 0.8);
+                    let sample_text = tokenizer.decode(&generated);
+                    json_escape(&sample_text[..sample_text.len().min(60)])
+                } else {
+                    String::new()
+                };
+
+                broadcast_to_clients(&clients, &format!(
+                    r#"{{"type":"swarm_fitness","gen":{},"id":{},"loss":{},"d_model":{},"layers":{},"sample":"{}"}}"#,
+                    gen + 1, i, swarm[i].fitness, swarm[i].config.d_model, swarm[i].config.n_layers, sample
+                ));
+            }
+
+            // Sort by fitness (lower loss = better)
+            swarm.sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap_or(std::cmp::Ordering::Equal));
+
+            let best = &swarm[0];
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"swarm_best","gen":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
+                gen + 1, best.config.d_model, best.config.n_layers, best.fitness, best.model.param_count()
+            ));
+
+            // Mutate: keep top 40%, replace rest
+            if gen < generations - 1 {
+                let survivors = (population * 4 / 10).max(1);
+                let survivor_configs: Vec<TransformerConfig> =
+                    swarm[..survivors].iter().map(|m| m.config.clone()).collect();
+
+                for i in survivors..population {
+                    let parent_idx = i % survivors;
+                    let parent = &survivor_configs[parent_idx];
+
+                    let mut new_config = parent.clone();
+                    let mutation = (gen * 3 + i * 7) % 3;
+                    match mutation {
+                        0 => {
+                            if (gen + i) % 2 == 0 {
+                                new_config.d_model = (new_config.d_model + 16).min(256);
+                            } else {
+                                new_config.d_model = new_config.d_model.saturating_sub(16).max(16);
+                            }
+                            new_config.n_heads = new_config.n_heads.min(new_config.d_model / 8).max(1);
+                            while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                                new_config.n_heads -= 1;
+                            }
+                        }
+                        1 => {
+                            if (gen + i) % 2 == 0 {
+                                new_config.n_layers = (new_config.n_layers + 1).min(8);
+                            } else {
+                                new_config.n_layers = new_config.n_layers.saturating_sub(1).max(1);
+                            }
+                        }
+                        _ => {
+                            if (gen + i) % 2 == 0 {
+                                new_config.n_heads = (new_config.n_heads + 1).min(new_config.d_model / 8).max(1);
+                            } else {
+                                new_config.n_heads = new_config.n_heads.saturating_sub(1).max(1);
+                            }
+                            while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                                new_config.n_heads -= 1;
+                            }
+                        }
+                    }
+
+                    let new_model = MiniGPT::new(new_config.clone());
+                    swarm[i] = SwarmMember {
+                        config: new_config,
+                        model: new_model,
+                        fitness: f32::MAX,
+                    };
+                }
+            }
+        }
+
+        // Final results
+        let show_count = population.min(5);
+        let results: Vec<String> = swarm.iter().enumerate().take(show_count).map(|(i, m)| {
+            format!(
+                r#"{{"rank":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
+                i + 1, m.config.d_model, m.config.n_layers, m.fitness, m.model.param_count()
+            )
+        }).collect();
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"swarm_complete","results":[{}]}}"#,
+            results.join(",")
+        ));
+
+        // Save best model and tokenizer
+        let model_dir = "data/models";
+        let _ = std::fs::create_dir_all(model_dir);
+
+        let model_path = format!("{}/swarm_best.qlgpt", model_dir);
+        let tok_path = format!("{}/swarm_tokenizer.qbpe", model_dir);
+
+        if let Err(e) = swarm[0].model.save(&model_path) {
+            eprintln!("[swarm] Failed to save model: {}", e);
+        } else {
+            eprintln!("[swarm] Model saved to {}", model_path);
+        }
+        if let Err(e) = tokenizer.save(&tok_path) {
+            eprintln!("[swarm] Failed to save tokenizer: {}", e);
+        } else {
+            eprintln!("[swarm] Tokenizer saved to {}", tok_path);
+        }
+
+        // Broadcast save paths
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"swarm_saved","model_path":"{}","tokenizer_path":"{}"}}"#,
+            json_escape(&model_path), json_escape(&tok_path)
+        ));
+
+        eprintln!("[swarm] ==============================");
+        eprintln!("[swarm] Swarm training complete!");
+        eprintln!("[swarm] ==============================");
     });
 }
 

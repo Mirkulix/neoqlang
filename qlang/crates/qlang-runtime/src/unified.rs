@@ -107,15 +107,13 @@ pub fn execute_unified(source: &str) -> Result<UnifiedResult, UnifiedError> {
     let graph_names: Vec<String> = graph_blocks.iter().map(|g| g.name.clone()).collect();
 
     // Execute script with graph access
-    let output = Vec::new();
-
     if !script.trim().is_empty() {
         match vm::run_qlang_script(&script) {
-            Ok((value, _captured_output)) => {
+            Ok((value, captured_output)) => {
                 return Ok(UnifiedResult {
                     vm_result: Some(value),
                     graphs: graph_names,
-                    output,
+                    output: captured_output,
                 });
             }
             Err(e) => return Err(UnifiedError::VmError(format!("{}", e))),
@@ -125,7 +123,7 @@ pub fn execute_unified(source: &str) -> Result<UnifiedResult, UnifiedError> {
     Ok(UnifiedResult {
         vm_result: None,
         graphs: graph_names,
-        output,
+        output: Vec::new(),
     })
 }
 

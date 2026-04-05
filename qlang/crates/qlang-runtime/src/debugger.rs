@@ -421,11 +421,13 @@ fn describe_stmt(stmt: &Stmt) -> String {
         Stmt::While { .. } => "while ...".to_string(),
         Stmt::For { var, .. } => format!("for {var} in ..."),
         Stmt::FnDef { name, params, .. } => {
-            format!("fn {name}({})", params.join(", "))
+            let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+            format!("fn {name}({})", param_names.join(", "))
         }
         Stmt::Return(_) => "return ...".to_string(),
         Stmt::Print(_) => "print(...)".to_string(),
         Stmt::ExprStmt(_) => "expr".to_string(),
+        Stmt::Import(path) => format!("import \"{}\"", path),
     }
 }
 

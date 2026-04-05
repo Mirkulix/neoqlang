@@ -189,7 +189,17 @@ pub fn run_repl() {
                         Err(e) => println!("  Error: {e}"),
                     }
                 } else {
-                    println!("  Unknown command. Type 'help' for help.");
+                    // Try executing as VM script (variables, expressions, print, etc.)
+                    match qlang_runtime::vm::run_qlang_script(line) {
+                        Ok((_value, output)) => {
+                            for out_line in &output {
+                                println!("{}", out_line);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  Error: {}", e);
+                        }
+                    }
                 }
             }
         }

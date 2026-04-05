@@ -21,6 +21,8 @@ pub mod repl;
 pub mod wasm;
 pub mod optimize;
 #[cfg(feature = "llvm")]
+pub mod script_jit;
+#[cfg(feature = "llvm")]
 pub mod simd;
 pub mod visualize;
 pub mod selfhost;

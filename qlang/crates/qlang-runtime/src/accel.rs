@@ -230,56 +230,117 @@ pub mod mlx_gpu {
     }
 }
 
+// ---- wgpu GPU backend (cross-platform: NVIDIA, AMD, Intel, Apple) ----
+
+#[cfg(feature = "gpu")]
+pub mod wgpu_gpu {
+    use crate::gpu_compute::gpu_compute::get_gpu;
+
+    /// Try GPU matmul.  Returns `None` when no GPU adapter is available.
+    pub fn matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Option<Vec<f32>> {
+        get_gpu().map(|gpu| gpu.matmul(a, b, m, n, k))
+    }
+
+    pub fn matmul_at_b(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Option<Vec<f32>> {
+        get_gpu().map(|gpu| gpu.matmul_at_b(a, b, m, n, k))
+    }
+
+    pub fn matmul_a_bt(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Option<Vec<f32>> {
+        get_gpu().map(|gpu| gpu.matmul_a_bt(a, b, m, n, k))
+    }
+
+    /// Returns the adapter name if a GPU is available.
+    pub fn adapter_name() -> Option<&'static str> {
+        get_gpu().map(|gpu| gpu.adapter_name())
+    }
+}
+
 // ---- Public API ----
 //
-// When the `mlx` feature is enabled on macOS, all matmul calls are routed through
-// Apple MLX (Metal GPU). Otherwise, the existing BLAS / pure-Rust platform backend
-// is used.
+// Backend priority:
+//   1. wgpu GPU   (feature = "gpu", any platform, any vendor)
+//   2. Apple MLX  (feature = "mlx", macOS only)
+//   3. Apple Accelerate BLAS (macOS, always linked)
+//   4. Pure Rust fallback
 
 /// C = A * B where A is [m, k] and B is [k, n], both row-major.
 /// Returns C as [m, n].
-#[cfg(all(target_os = "macos", feature = "mlx"))]
 pub fn matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    mlx_gpu::matmul(a, b, m, n, k)
-}
-
-#[cfg(not(all(target_os = "macos", feature = "mlx")))]
-pub fn matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    platform::matmul(a, b, m, n, k)
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(result) = wgpu_gpu::matmul(a, b, m, n, k) {
+            return result;
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "mlx"))]
+    {
+        return mlx_gpu::matmul(a, b, m, n, k);
+    }
+    #[cfg(not(all(target_os = "macos", feature = "mlx")))]
+    {
+        platform::matmul(a, b, m, n, k)
+    }
 }
 
 /// C = A^T * B where A is stored as [k, m] and B is [k, n].
 /// Returns C as [m, n]. Used for gradient computations (dW = X^T @ dY).
-#[cfg(all(target_os = "macos", feature = "mlx"))]
 pub fn matmul_at_b(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    mlx_gpu::matmul_at_b(a, b, m, n, k)
-}
-
-#[cfg(not(all(target_os = "macos", feature = "mlx")))]
-pub fn matmul_at_b(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    platform::matmul_at_b(a, b, m, n, k)
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(result) = wgpu_gpu::matmul_at_b(a, b, m, n, k) {
+            return result;
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "mlx"))]
+    {
+        return mlx_gpu::matmul_at_b(a, b, m, n, k);
+    }
+    #[cfg(not(all(target_os = "macos", feature = "mlx")))]
+    {
+        platform::matmul_at_b(a, b, m, n, k)
+    }
 }
 
 /// C = A * B^T where A is [m, k] and B is stored as [n, k].
 /// Returns C as [m, n]. Used for backprop (d_hidden = d_logits @ W^T).
-#[cfg(all(target_os = "macos", feature = "mlx"))]
 pub fn matmul_a_bt(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    mlx_gpu::matmul_a_bt(a, b, m, n, k)
-}
-
-#[cfg(not(all(target_os = "macos", feature = "mlx")))]
-pub fn matmul_a_bt(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-    platform::matmul_a_bt(a, b, m, n, k)
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(result) = wgpu_gpu::matmul_a_bt(a, b, m, n, k) {
+            return result;
+        }
+    }
+    #[cfg(all(target_os = "macos", feature = "mlx"))]
+    {
+        return mlx_gpu::matmul_a_bt(a, b, m, n, k);
+    }
+    #[cfg(not(all(target_os = "macos", feature = "mlx")))]
+    {
+        platform::matmul_a_bt(a, b, m, n, k)
+    }
 }
 
 /// Returns the name of the active matmul backend.
 pub fn backend_name() -> &'static str {
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(name) = wgpu_gpu::adapter_name() {
+            // Leak is fine -- this is a 'static str from a singleton that lives forever.
+            return Box::leak(format!("wgpu ({})", name).into_boxed_str());
+        }
+    }
     #[cfg(all(target_os = "macos", feature = "mlx"))]
-    { "Apple MLX (Metal GPU)" }
+    {
+        return "Apple MLX (Metal GPU)";
+    }
     #[cfg(all(target_os = "macos", not(feature = "mlx")))]
-    { "Apple Accelerate (CPU BLAS)" }
+    {
+        return "Apple Accelerate (CPU BLAS)";
+    }
     #[cfg(not(target_os = "macos"))]
-    { "Pure Rust (fallback)" }
+    {
+        return "Pure Rust (fallback)";
+    }
 }
 
 #[cfg(test)]

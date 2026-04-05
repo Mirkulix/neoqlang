@@ -7,9 +7,12 @@
 //! - Constraint, Proof (verification primitives)
 //! - Crypto: SHA-256 hashing, HMAC-SHA256 signatures (protocol security)
 
+pub mod binary;
+pub mod cache;
 pub mod crypto;
 pub mod errors;
 pub mod graph;
+pub mod merkle;
 pub mod ops;
 pub mod quantum;
 pub mod serial;

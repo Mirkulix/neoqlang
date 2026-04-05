@@ -383,7 +383,7 @@ fn check_unused_nodes(graph: &Graph, collector: &mut DiagnosticCollector) {
             let severity = if matches!(node.op, Op::Input { .. } | Op::Output { .. }) {
                 Severity::Warning
             } else {
-                Severity::Warning
+                Severity::Info
             };
             collector.push(
                 RuntimeDiagnostic {

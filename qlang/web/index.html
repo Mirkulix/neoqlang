@@ -3,927 +3,731 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QLANG - KI Pipeline</title>
-<!-- Zero external dependencies - pure standalone -->
+<title>QLANG</title>
 <style>
-/* ============ DESIGN SYSTEM ============ */
-:root {
-  --bg: #000000;
-  --surface: #0d1117;
-  --card: #161b22;
-  --border: #21262d;
-  --text: #e6edf3;
-  --text-dim: #7d8590;
-  --blue: #2563EB;
-  --blue-light: #58a6ff;
-  --green: #3fb950;
-  --orange: #f97316;
-  --purple: #bc8cff;
-  --red: #f85149;
-  --yellow: #d29922;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  --mono: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
-  --radius: 8px;
-  --transition: 200ms ease;
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; height: 100vh; overflow: hidden; }
-button { cursor: pointer; font-family: var(--font); }
+:root{--bg:#000;--s1:#0d1117;--s2:#161b22;--bd:#21262d;--tx:#e6edf3;--dm:#7d8590;--bl:#58a6ff;--gn:#3fb950;--or:#f97316;--pu:#bc8cff;--rd:#f85149;--yl:#d29922}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;height:100vh;overflow:hidden}
+button{cursor:pointer;font-family:inherit;border:none;border-radius:6px;font-size:13px;font-weight:600;padding:10px 16px;transition:all .15s}
+select,input[type=number]{background:var(--s1);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit}
+textarea{background:var(--s1);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:10px;font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;resize:none;width:100%;line-height:1.6}
+textarea:focus,select:focus{border-color:var(--bl);outline:none}
 
-/* ============ LAYOUT: 3 columns ============ */
-.app { display: grid; grid-template-rows: 56px 1fr; grid-template-columns: 1fr 420px; height: 100vh; }
+/* Layout: Header + 2 columns */
+.app{display:grid;grid-template-rows:48px 1fr;grid-template-columns:1fr 380px;height:100vh}
+.hdr{grid-column:1/-1;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 20px;gap:16px}
+.hdr h1{font-family:'SF Mono',Menlo,monospace;font-size:16px;font-weight:700;color:var(--bl);letter-spacing:2px}
+.hdr .sep{width:1px;height:24px;background:var(--bd)}
+.status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dm);padding:4px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:16px}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.ok{background:var(--gn);box-shadow:0 0 6px var(--gn)}
+.dot.off{background:var(--rd)}
+.hdr-right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.hdr a{color:var(--dm);font-size:12px;text-decoration:none;padding:4px 8px;border-radius:4px}
+.hdr a:hover{background:var(--s2);color:var(--tx)}
 
-/* ============ HEADER ============ */
-.header { grid-column: 1 / -1; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 20px; }
-.header .brand { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--blue-light); letter-spacing: 2px; }
-.header .sep { width: 1px; height: 24px; background: var(--border); }
-.status-group { display: flex; align-items: center; gap: 16px; }
-.status-badge { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); padding: 4px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.status-dot.off { background: var(--red); }
-.status-dot.wait { background: var(--yellow); animation: blink 1s infinite; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* Left: Live Feed - THE MAIN THING */
+.feed{overflow-y:auto;padding:16px;background:var(--bg)}
+.feed::-webkit-scrollbar{width:4px}
+.feed::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
 
-/* ============ MAIN AREA (left) ============ */
-.main-area { display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
+.msg{padding:10px 14px;margin-bottom:8px;border-radius:8px;background:var(--s2);border-left:3px solid var(--bd);animation:fadeIn .2s ease;font-size:13px;line-height:1.6}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg .time{color:#484f58;font-size:10px;font-family:'SF Mono',Menlo,monospace;margin-right:8px}
+.msg .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;margin-right:6px;letter-spacing:.3px}
+.msg.sys{border-left-color:var(--bl)} .msg.sys .tag{background:rgba(88,166,255,.12);color:var(--bl)}
+.msg.ai{border-left-color:var(--or)} .msg.ai .tag{background:rgba(249,115,22,.12);color:var(--or)}
+.msg.train{border-left-color:var(--gn)} .msg.train .tag{background:rgba(63,185,80,.12);color:var(--gn)}
+.msg.igqk{border-left-color:var(--pu)} .msg.igqk .tag{background:rgba(188,140,255,.12);color:var(--pu)}
+.msg.err{border-left-color:var(--rd)} .msg.err .tag{background:rgba(248,81,73,.12);color:var(--rd)}
+.msg.ok{border-left-color:var(--gn);background:rgba(63,185,80,.06)} .msg.ok .tag{background:rgba(63,185,80,.15);color:var(--gn)}
+.msg.step{border-left-color:var(--yl)} .msg.step .tag{background:rgba(210,153,34,.12);color:var(--yl)}
 
-/* -- Step indicator -- */
-.steps { display: flex; align-items: center; gap: 2px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
-.step { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 500; color: var(--text-dim); background: var(--card); border: 1px solid var(--border); white-space: nowrap; transition: all var(--transition); }
-.step svg { width: 14px; height: 14px; flex-shrink: 0; }
-.step.active { color: var(--blue-light); border-color: var(--blue); background: rgba(37,99,235,0.1); box-shadow: 0 0 12px rgba(37,99,235,0.2); }
-.step.done { color: var(--green); border-color: var(--green); background: rgba(63,185,80,0.08); }
-.step.done svg { color: var(--green); }
-.step-arrow { color: var(--border); font-size: 16px; padding: 0 2px; }
-.step-arrow.active { color: var(--blue-light); }
+.msg-big{font-size:16px;font-weight:600;padding:14px 18px;margin:12px 0}
+.msg-result{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+.msg-result .stat{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:8px 14px;text-align:center;min-width:80px}
+.msg-result .stat .v{font-size:18px;font-weight:700;font-family:'SF Mono',Menlo,monospace}
+.msg-result .stat .l{font-size:9px;color:var(--dm);text-transform:uppercase;margin-top:2px}
 
-/* -- Content split: 3D + Log -- */
-.content { display: flex; flex: 1; overflow: hidden; }
+/* Right sidebar: Actions */
+.side{background:var(--s1);border-left:1px solid var(--bd);overflow-y:auto;padding:0}
+.side::-webkit-scrollbar{width:4px}
+.side::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
 
-/* -- 3D Canvas -- */
-.canvas-wrap { flex: 1; position: relative; min-width: 300px; background: var(--bg); }
-.canvas-wrap canvas { display: block; }
-.canvas-overlay { position: absolute; bottom: 12px; left: 12px; right: 12px; display: flex; gap: 8px; pointer-events: none; }
-.canvas-stat { background: rgba(13,17,23,0.85); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; backdrop-filter: blur(8px); }
-.canvas-stat .val { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--text); }
-.canvas-stat .lbl { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
-.canvas-hint { position: absolute; top: 12px; left: 12px; font-size: 10px; color: var(--text-dim); pointer-events: none; }
+.panel{border-bottom:1px solid var(--bd);padding:16px}
+.panel h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dm);margin-bottom:12px}
+.panel .desc{font-size:12px;color:var(--dm);margin-bottom:12px;line-height:1.5}
 
-/* -- Live Log -- */
-.log-wrap { width: 340px; display: flex; flex-direction: column; border-left: 1px solid var(--border); flex-shrink: 0; }
-.log-title { padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.log-body { flex: 1; overflow-y: auto; padding: 8px; }
-.log-body::-webkit-scrollbar { width: 4px; }
-.log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.le { padding: 6px 10px; margin-bottom: 4px; border-radius: 6px; font-size: 12px; font-family: var(--mono); line-height: 1.5; animation: fadeIn 0.2s ease; border-left: 3px solid var(--border); background: var(--card); word-break: break-word; }
-@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-.le .ts { color: #484f58; font-size: 10px; margin-right: 6px; }
-.le .tg { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 4px; letter-spacing: 0.5px; }
-.le.ollama { border-left-color: var(--orange); }
-.le.ollama .tg { background: rgba(249,115,22,0.15); color: var(--orange); }
-.le.train { border-left-color: var(--green); }
-.le.train .tg { background: rgba(63,185,80,0.15); color: var(--green); }
-.le.sys { border-left-color: var(--blue-light); }
-.le.sys .tg { background: rgba(88,166,255,0.15); color: var(--blue-light); }
-.le.igqk { border-left-color: var(--purple); }
-.le.igqk .tg { background: rgba(188,140,255,0.15); color: var(--purple); }
-.le.pipe { border-left-color: var(--yellow); }
-.le.pipe .tg { background: rgba(210,153,34,0.15); color: var(--yellow); }
-.le.err { border-left-color: var(--red); }
+.btn-primary{width:100%;background:var(--bl);color:#fff}
+.btn-primary:hover{box-shadow:0 0 16px rgba(37,99,235,.3)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.btn-green{width:100%;background:var(--gn);color:#000}
+.btn-green:hover{box-shadow:0 0 16px rgba(63,185,80,.3)}
+.btn-purple{width:100%;background:var(--pu);color:#000}
+.btn-purple:hover{box-shadow:0 0 16px rgba(188,140,255,.3)}
+.btn-orange{width:100%;background:var(--or);color:#000}
+.btn-orange:hover{box-shadow:0 0 16px rgba(249,115,22,.3)}
 
-/* ============ SIDEBAR (right) ============ */
-.sidebar { display: flex; flex-direction: column; overflow-y: auto; background: var(--surface); }
-.sidebar::-webkit-scrollbar { width: 4px; }
-.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.running{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 
-.sb-section { padding: 16px; border-bottom: 1px solid var(--border); }
-.sb-section h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
-.sb-section h3 svg { width: 14px; height: 14px; color: var(--blue-light); }
+.field{margin-bottom:10px}
+.field label{display:block;font-size:11px;color:var(--dm);margin-bottom:4px}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
 
-/* -- Form fields -- */
-.field { margin-bottom: 12px; }
-.field label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; font-weight: 500; }
-.field textarea, .field select, .field input[type=range] { width: 100%; }
-.field textarea { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); padding: 10px; font-size: 13px; font-family: var(--font); height: 70px; resize: none; transition: border-color var(--transition); }
-.field textarea:focus { border-color: var(--blue); outline: none; }
-.field select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius); padding: 8px 10px; font-size: 13px; font-family: var(--font); appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8590' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; cursor: pointer; }
-.field select:focus { border-color: var(--blue); outline: none; }
-.field input[type=range] { accent-color: var(--blue); }
-.field .range-val { float: right; font-family: var(--mono); font-size: 12px; color: var(--blue-light); }
+/* Progress bar */
+.pbar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin:8px 0}
+.pbar .fill{height:100%;background:linear-gradient(90deg,var(--bl),var(--gn));border-radius:3px;transition:width .3s;width:0%}
+.pbar-label{display:flex;justify-content:space-between;font-size:11px;color:var(--dm);font-family:'SF Mono',Menlo,monospace}
 
-/* -- Start button -- */
-.start-btn { width: 100%; padding: 14px; background: var(--blue); color: #fff; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 600; transition: all var(--transition); display: flex; align-items: center; justify-content: center; gap: 8px; }
-.start-btn:hover { background: #3b82f6; box-shadow: 0 0 20px rgba(37,99,235,0.3); }
-.start-btn:active { transform: scale(0.98); }
-.start-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
-.start-btn.running { background: var(--orange); animation: pulse-btn 2s infinite; }
-@keyframes pulse-btn { 0%,100%{box-shadow:0 0 5px rgba(249,115,22,0.2)} 50%{box-shadow:0 0 20px rgba(249,115,22,0.4)} }
+/* Welcome */
+.welcome{padding:40px;text-align:center;max-width:500px;margin:60px auto}
+.welcome h2{font-size:24px;margin-bottom:8px}
+.welcome p{color:var(--dm);font-size:14px;line-height:1.6;margin-bottom:20px}
+.welcome .arrow{font-size:32px;color:var(--bd);margin:16px 0}
 
-/* -- Progress bar -- */
-.progress { margin-top: 12px; display: none; }
-.progress.show { display: block; }
-.pbar-bg { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
-.pbar-fill { height: 100%; background: linear-gradient(90deg, var(--blue), var(--green)); border-radius: 3px; transition: width 0.3s; width: 0%; }
-.pbar-label { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+/* Live Charts */
+.live-chart{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:8px 0;animation:fadeIn .3s ease}
+.live-chart canvas{width:100%;height:120px;display:block;border-radius:4px}
+.live-chart .chart-title{font-size:11px;color:var(--dm);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.live-chart .chart-legend{display:flex;gap:14px;margin-top:6px;font-size:10px;color:var(--dm)}
+.live-chart .chart-legend span::before{content:'';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.live-chart .leg-loss::before{background:var(--or)}
+.live-chart .leg-acc::before{background:var(--gn)}
+.live-chart .leg-best::before{background:var(--pu)}
 
-/* -- Metrics grid -- */
-.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; display: none; }
-.metrics.show { display: grid; }
-.metric { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
-.metric .mv { font-family: var(--mono); font-size: 22px; font-weight: 600; }
-.metric .ml { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-.metric.acc .mv { color: var(--green); }
-.metric.loss .mv { color: var(--orange); }
-.metric.ratio .mv { color: var(--purple); }
-.metric.size .mv { color: var(--blue-light); }
+/* Swarm grid visualization */
+.swarm-grid{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin:8px 0;animation:fadeIn .3s ease}
+.swarm-dot{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'SF Mono',Menlo,monospace;border:2px solid var(--bd);transition:all .3s}
+.swarm-dot.best{border-color:var(--gn);box-shadow:0 0 10px rgba(63,185,80,.3)}
 
-/* ============ MODEL TESTER ============ */
-.tester-section { display: none; }
-.tester-section.show { display: block; }
-.tester-wrap { display: flex; gap: 16px; flex-wrap: wrap; }
-.tester-canvas-wrap { position: relative; }
-.tester-canvas {
-  width: 280px; height: 280px;
-  border: 2px solid var(--border);
-  border-radius: var(--radius);
-  background: #000;
-  cursor: crosshair;
-  touch-action: none;
-}
-.tester-buttons { display: flex; gap: 8px; margin-top: 8px; }
-.tester-buttons button {
-  flex: 1; padding: 10px; border: 1px solid var(--border);
-  border-radius: var(--radius); font-size: 13px; font-weight: 600;
-  transition: all var(--transition);
-}
-.btn-predict { background: var(--green); color: #000; border-color: var(--green); }
-.btn-predict:hover { box-shadow: 0 0 12px rgba(63,185,80,0.3); }
-.btn-clear { background: var(--card); color: var(--text); }
-.btn-clear:hover { border-color: var(--text-dim); }
-.tester-result { flex: 1; min-width: 120px; }
-.tester-digit { font-family: var(--mono); font-size: 64px; font-weight: 700; text-align: center; color: var(--green); line-height: 1.2; }
-.tester-digit-label { text-align: center; font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
-.confidence-bars { margin-top: 8px; }
-.conf-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 11px; font-family: var(--mono); }
-.conf-label { width: 12px; color: var(--text-dim); text-align: right; }
-.conf-bar-bg { flex: 1; height: 10px; background: var(--border); border-radius: 3px; overflow: hidden; }
-.conf-bar-fill { height: 100%; background: var(--blue); border-radius: 3px; transition: width 0.3s; }
-.conf-bar-fill.top { background: var(--green); }
-.conf-val { width: 36px; color: var(--text-dim); font-size: 10px; text-align: right; }
+/* Pipeline steps visual */
+.pipe-steps{display:flex;align-items:center;gap:2px;padding:10px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin:8px 0;overflow-x:auto;animation:fadeIn .3s ease}
+.pipe-step{padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;color:var(--dm);background:var(--s2);border:1px solid var(--bd);white-space:nowrap;transition:all .3s}
+.pipe-step.active{color:var(--bl);border-color:var(--bl);background:rgba(37,99,235,.1);box-shadow:0 0 8px rgba(37,99,235,.2)}
+.pipe-step.done{color:var(--gn);border-color:var(--gn);background:rgba(63,185,80,.06)}
+.pipe-arrow{color:var(--bd);font-size:14px}
+.pipe-arrow.active{color:var(--bl)}
 
-/* ============ EVOLUTION ============ */
-.evo-section { border-top: 1px solid var(--border); }
-.evo-controls { display: flex; gap: 8px; flex-wrap: wrap; }
-.evo-btn {
-  width: 100%; padding: 12px; border: 1px solid var(--purple);
-  background: rgba(188,140,255,0.1); color: var(--purple);
-  border-radius: var(--radius); font-size: 13px; font-weight: 600;
-  transition: all var(--transition); display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-.evo-btn:hover { background: rgba(188,140,255,0.2); box-shadow: 0 0 16px rgba(188,140,255,0.2); }
-.evo-btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
-.evo-btn.running { animation: pulse-evo 2s infinite; }
-@keyframes pulse-evo { 0%,100%{box-shadow:0 0 5px rgba(188,140,255,0.2)} 50%{box-shadow:0 0 20px rgba(188,140,255,0.4)} }
-.evo-grid {
-  display: none; margin-top: 12px;
-  min-height: 80px; background: var(--bg);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 12px; position: relative;
-}
-.evo-grid.show { display: block; }
-.evo-gen-row { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
-.evo-gen-label { font-size: 10px; font-family: var(--mono); color: var(--text-dim); width: 32px; flex-shrink: 0; }
-.evo-dot {
-  width: 14px; height: 14px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 7px; font-family: var(--mono); color: transparent;
-  transition: all 0.3s; cursor: default; border: 1px solid transparent;
-}
-.evo-dot:hover { transform: scale(1.6); color: #fff; z-index: 10; }
-.evo-dot.best { border-color: var(--green); box-shadow: 0 0 6px var(--green); }
-.evo-status { margin-top: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); text-align: center; }
-.evo-result {
-  display: none; margin-top: 10px; padding: 10px;
-  background: rgba(63,185,80,0.08); border: 1px solid var(--green);
-  border-radius: var(--radius); text-align: center;
-}
-.evo-result.show { display: block; }
-.evo-result .ev-arch { font-family: var(--mono); font-size: 16px; color: var(--green); font-weight: 600; }
-.evo-result .ev-acc { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 4px; }
-
-@media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; }
-  .sidebar { max-height: 40vh; }
-  .log-wrap { width: 200px; }
-}
+/* Autonomous iteration cards */
+.iter-card{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:8px 0;display:flex;align-items:center;gap:12px;animation:fadeIn .3s ease}
+.iter-num{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-family:'SF Mono',Menlo,monospace;border:2px solid var(--bd);flex-shrink:0}
+.iter-num.pass{border-color:var(--gn);color:var(--gn)}
+.iter-num.fail{border-color:var(--yl);color:var(--yl)}
+.iter-num.win{border-color:var(--gn);color:#000;background:var(--gn)}
+.iter-body{flex:1;font-size:12px;line-height:1.5}
+.iter-arch{font-family:'SF Mono',Menlo,monospace;color:var(--bl);font-weight:600}
+.iter-metrics{display:flex;gap:10px;margin-top:4px}
+.iter-metric{font-size:11px;color:var(--dm)}
+.iter-metric b{color:var(--tx)}
 </style>
 </head>
 <body>
 <div class="app">
 
-  <!-- ============ HEADER ============ -->
-  <header class="header">
-    <span class="brand">QLANG</span>
+  <!-- Header -->
+  <header class="hdr">
+    <h1>QLANG</h1>
     <span class="sep"></span>
-    <a href="/docs.html" style="padding:6px 14px;border-radius:6px;background:var(--card);border:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:500;text-decoration:none;transition:all 0.15s;font-family:var(--font);" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--blue)'" onmouseout="this.style.color='var(--text-dim)';this.style.borderColor='var(--border)'">Dokumentation</a>
-    <div class="status-group">
-      <div class="status-badge">
-        <div class="status-dot off" id="wsDot"></div>
-        <span id="wsLabel">Verbinde...</span>
-      </div>
-      <div class="status-badge">
-        <div class="status-dot off" id="ollamaDot"></div>
-        <span id="ollamaLabel">Ollama...</span>
-      </div>
+    <div class="status"><div class="dot off" id="wsDot"></div><span id="wsLbl">Verbinde...</span></div>
+    <div class="status"><div class="dot off" id="olDot"></div><span id="olLbl">Ollama...</span></div>
+    <div class="hdr-right">
+      <a href="/docs.html">Dokumentation</a>
     </div>
   </header>
 
-  <!-- ============ MAIN ============ -->
-  <div class="main-area">
-    <!-- Pipeline Steps -->
-    <div class="steps" id="steps">
-      <div class="step" id="s1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Aufgabe</div>
-      <div class="step-arrow" id="sa1">&rarr;</div>
-      <div class="step" id="s2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> Architekt</div>
-      <div class="step-arrow" id="sa2">&rarr;</div>
-      <div class="step" id="s3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg> Build</div>
-      <div class="step-arrow" id="sa3">&rarr;</div>
-      <div class="step" id="s4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Training</div>
-      <div class="step-arrow" id="sa4">&rarr;</div>
-      <div class="step" id="s5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg> IGQK</div>
-      <div class="step-arrow" id="sa5">&rarr;</div>
-      <div class="step" id="s6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Evaluator</div>
-    </div>
-
-    <!-- Content: 3D + Log -->
-    <div class="content">
-      <div class="canvas-wrap" id="canvas3d">
-        <div class="canvas-hint">Drag = Drehen &middot; Scroll = Zoom</div>
-        <div class="canvas-overlay">
-          <div class="canvas-stat"><div class="val" id="c3dLayers">4</div><div class="lbl">Layers</div></div>
-          <div class="canvas-stat"><div class="val" id="c3dNeurons">986</div><div class="lbl">Neuronen</div></div>
-          <div class="canvas-stat"><div class="val" id="c3dParams">--</div><div class="lbl">Parameter</div></div>
-        </div>
-      </div>
-      <div class="log-wrap">
-        <div class="log-title">Live Kommunikation</div>
-        <div class="log-body" id="logBody"></div>
-      </div>
+  <!-- Left: Live Feed -->
+  <div class="feed" id="feed">
+    <div class="welcome" id="welcome">
+      <h2>Willkommen bei QLANG</h2>
+      <p>Waehle rechts eine Aktion aus.<br>Alles was passiert siehst du hier in Echtzeit.</p>
+      <div class="arrow">&rarr;</div>
     </div>
   </div>
 
-  <!-- ============ SIDEBAR ============ -->
-  <div class="sidebar">
-    <!-- Task -->
-    <div class="sb-section">
-      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Aufgabe definieren</h3>
-      <div class="field">
-        <textarea id="task" placeholder="Was soll die KI bauen? z.B.:&#10;- Ziffern-Erkenner&#10;- Spam-Detektor&#10;- Muster-Klassifikator">Baue einen Ziffern-Erkenner</textarea>
-      </div>
-    </div>
+  <!-- Right: Actions -->
+  <div class="side">
 
-    <!-- Models -->
-    <div class="sb-section">
-      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg> LLM Modelle</h3>
+    <!-- 1. Quick Actions -->
+    <div class="panel">
+      <h3>Schnellstart</h3>
+      <div class="desc">Waehle was du machen willst. Das Ergebnis erscheint links in Echtzeit.</div>
+      <button class="btn-green" id="btnSwarm" onclick="doSwarm()" disabled style="margin-bottom:8px">
+        Schwarm trainieren
+      </button>
+      <div class="desc">6 kleine Sprachmodelle evolvieren sich. Das beste wird gespeichert.</div>
       <div class="field">
-        <label>Architekt <span style="color:var(--text-dim)">(entwirft das Netzwerk)</span></label>
-        <select id="selArch"><option>deepseek-r1:1.5b</option></select>
-      </div>
-      <div class="field">
-        <label>Evaluator <span style="color:var(--text-dim)">(bewertet das Ergebnis)</span></label>
-        <select id="selEval"><option>deepseek-r1:1.5b</option></select>
-      </div>
-    </div>
-
-    <!-- Config -->
-    <div class="sb-section">
-      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> Konfiguration</h3>
-      <div class="field">
-        <label>Trainings-Epochen <span class="range-val" id="epochVal">10</span></label>
-        <input type="range" id="epochs" min="3" max="30" value="10" oninput="document.getElementById('epochVal').textContent=this.value">
-      </div>
-      <div class="field">
-        <label>Datensatz</label>
-        <select id="dataset">
-          <option value="synthetic">Synthetisch (schnell ~5s)</option>
-          <option value="mnist">MNIST (60.000 Bilder)</option>
+        <label>Trainingsdaten</label>
+        <select id="selData">
+          <option value="quick">Eingebaut (schnell, 5 Sek)</option>
+          <option value="data/text/wiki_small.txt">WikiText-2 klein (500 KB)</option>
+          <option value="data/text/wiki2_train.txt">WikiText-2 voll (10 MB)</option>
         </select>
       </div>
+      <div class="row">
+        <div class="field"><label>Modelle</label><input type="number" id="inPop" value="6" min="2" max="20" style="width:100%"></div>
+        <div class="field"><label>Generationen</label><input type="number" id="inGen" value="3" min="1" max="20" style="width:100%"></div>
+      </div>
+      <div class="pbar" id="swarmBar" style="display:none"><div class="fill" id="swarmFill"></div></div>
+      <div class="pbar-label" id="swarmLbl" style="display:none"><span id="swarmL">-</span><span id="swarmR">-</span></div>
     </div>
 
-    <!-- Start -->
-    <div class="sb-section">
-      <button class="start-btn" id="startBtn" disabled>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        Pipeline starten
-      </button>
-      <div class="progress" id="progress">
-        <div class="pbar-bg"><div class="pbar-fill" id="pbarFill"></div></div>
-        <div class="pbar-label"><span id="pbarLeft">--</span><span id="pbarRight">--</span></div>
-      </div>
-      <div class="metrics" id="metrics">
-        <div class="metric acc"><div class="mv" id="mAcc">--</div><div class="ml">Accuracy</div></div>
-        <div class="metric loss"><div class="mv" id="mLoss">--</div><div class="ml">Loss</div></div>
-        <div class="metric ratio"><div class="mv" id="mRatio">--</div><div class="ml">Kompression</div></div>
-        <div class="metric size"><div class="mv" id="mSize">--</div><div class="ml">Modell</div></div>
-      </div>
-    </div>
-
-    <!-- Model Tester -->
-    <div class="sb-section tester-section" id="testerSection">
-      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Modell testen</h3>
-      <div class="tester-wrap">
-        <div class="tester-canvas-wrap">
-          <canvas class="tester-canvas" id="drawCanvas" width="280" height="280"></canvas>
-          <div class="tester-buttons">
-            <button class="btn-predict" id="btnPredict">Erkennen</button>
-            <button class="btn-clear" id="btnClear">Loeschen</button>
-          </div>
-        </div>
-        <div class="tester-result">
-          <div class="tester-digit" id="predDigit">?</div>
-          <div class="tester-digit-label">Vorhersage</div>
-          <div class="confidence-bars" id="confBars"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Evolution -->
-    <div class="sb-section evo-section">
-      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0110 10c0 5.52-4.48 10-10 10S2 17.52 2 12"/><path d="M12 2c3 3 4.5 6.5 4.5 10S15 19 12 22"/><path d="M2 12h20"/></svg> Neuroevolution</h3>
+    <!-- 2. KI Pipeline -->
+    <div class="panel">
+      <h3>KI Pipeline</h3>
+      <div class="desc">Ein Ollama-LLM entwirft die Architektur, QLANG trainiert, ein zweites LLM bewertet.</div>
       <div class="field">
-        <label>Population <span class="range-val" id="evoPopVal">10</span></label>
-        <input type="range" id="evoPop" min="4" max="20" value="10" oninput="document.getElementById('evoPopVal').textContent=this.value">
+        <label>Aufgabe</label>
+        <textarea id="taskText" rows="2" placeholder="z.B. Baue einen Ziffern-Erkenner">Baue einen Ziffern-Erkenner</textarea>
       </div>
-      <div class="field">
-        <label>Generationen <span class="range-val" id="evoGenVal">5</span></label>
-        <input type="range" id="evoGen" min="2" max="10" value="5" oninput="document.getElementById('evoGenVal').textContent=this.value">
+      <div class="row">
+        <div class="field"><label>Architekt</label><select id="selArch"><option>deepseek-r1:1.5b</option></select></div>
+        <div class="field"><label>Evaluator</label><select id="selEval"><option>llama3.2</option></select></div>
       </div>
-      <button class="evo-btn" id="evoBtn" disabled>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0110 10c0 5.52-4.48 10-10 10S2 17.52 2 12"/><path d="M22 12H18"/></svg>
-        Evolution starten
-      </button>
-      <div class="evo-grid" id="evoGrid"></div>
-      <div class="evo-status" id="evoStatus"></div>
-      <div class="evo-result" id="evoResult">
-        <div class="ev-arch" id="evoArch">--</div>
-        <div class="ev-acc" id="evoAcc">--</div>
-      </div>
+      <button class="btn-primary" id="btnPipeline" onclick="doPipeline()" disabled>Pipeline starten</button>
     </div>
+
+    <!-- 3. Autonom -->
+    <div class="panel">
+      <h3>Autonomer Modus</h3>
+      <div class="desc">KI verbessert sich selbst bis die Ziel-Accuracy erreicht ist. Laeuft ohne Eingriff.</div>
+      <div class="row">
+        <div class="field"><label>Ziel-Accuracy</label><input type="number" id="inTarget" value="95" min="50" max="100" style="width:100%">%</div>
+        <div class="field"><label>Max Versuche</label><input type="number" id="inMaxIter" value="5" min="1" max="20" style="width:100%"></div>
+      </div>
+      <button class="btn-purple" id="btnAuto" onclick="doAutonomous()" disabled>Autonom starten</button>
+    </div>
+
+    <!-- 4. Code ausfuehren -->
+    <div class="panel">
+      <h3>Code ausfuehren</h3>
+      <div class="desc">QLANG-Code direkt ausfuehren. Ergebnis erscheint links.</div>
+      <textarea id="codeText" rows="6" style="font-size:12px">let x: int = 42
+print("Hello QLANG!")
+print("x^2 = " + str(x ** 2))
+
+fn fib(n) {
+  if n <= 1 { return n }
+  return fib(n-1) + fib(n-2)
+}
+
+for i in 0..8 {
+  print("fib(" + str(i) + ") = " + str(fib(i)))
+}</textarea>
+      <button class="btn-orange" id="btnRun" onclick="doRun()" disabled style="margin-top:8px">Code ausfuehren</button>
+    </div>
+
   </div>
 </div>
 
 <script>
-// ============================================================
-// STATE
-// ============================================================
-var ws = null, totalEpochs = 10, pipelineRunning = false, evolutionRunning = false;
+var ws = null, connected = false;
 
 // ============================================================
-// LOGGING
+// FEED - Everything visible here
 // ============================================================
-function addLog(cls, tag, msg) {
-  var el = document.getElementById('logBody');
-  var t = new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+function addMsg(cls, tag, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
   var d = document.createElement('div');
-  d.className = 'le ' + cls;
-  d.innerHTML = '<span class="ts">' + t + '</span><span class="tg">' + tag + '</span> ' + msg;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
+  d.className = 'msg ' + cls;
+  var t = new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  d.innerHTML = '<span class="time">' + t + '</span><span class="tag">' + tag + '</span>' + html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
 }
 
-// ============================================================
-// STEP INDICATOR
-// ============================================================
-function setStep(active) {
-  for (var i = 1; i <= 6; i++) {
-    var s = document.getElementById('s' + i);
-    var a = document.getElementById('sa' + i);
-    if (i < active) { s.className = 'step done'; if(a) a.className = 'step-arrow active'; }
-    else if (i === active) { s.className = 'step active'; if(a) a.className = 'step-arrow active'; }
-    else { s.className = 'step'; if(a) a.className = 'step-arrow'; }
-  }
+function addBig(cls, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg msg-big ' + cls;
+  d.innerHTML = html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function addResult(stats) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg-result';
+  d.innerHTML = stats.map(function(s) {
+    return '<div class="stat"><div class="v" style="color:' + (s.c||'var(--tx)') + '">' + s.v + '</div><div class="l">' + s.l + '</div></div>';
+  }).join('');
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
 }
 
 // ============================================================
 // WEBSOCKET
 // ============================================================
 function connect() {
-  var url = 'ws://' + window.location.host + '/ws';
+  var url = 'ws://' + location.host + '/ws';
   ws = new WebSocket(url);
   ws.onopen = function() {
-    document.getElementById('wsDot').className = 'status-dot ok';
-    document.getElementById('wsLabel').textContent = 'Verbunden';
-    addLog('sys','SYSTEM','WebSocket verbunden');
+    connected = true;
+    document.getElementById('wsDot').className = 'dot ok';
+    document.getElementById('wsLbl').textContent = 'Verbunden';
+    addMsg('sys','SYSTEM','Verbunden mit QLANG Server');
     ws.send(JSON.stringify({type:'list_models'}));
-    addLog('sys','SEND','\u2192 Frage Ollama nach Modellen...');
-    document.getElementById('startBtn').disabled = false;
-    document.getElementById('evoBtn').disabled = false;
+    // Enable all buttons
+    ['btnSwarm','btnPipeline','btnAuto','btnRun'].forEach(function(id){document.getElementById(id).disabled=false});
   };
   ws.onclose = function() {
-    document.getElementById('wsDot').className = 'status-dot off';
-    document.getElementById('wsLabel').textContent = 'Getrennt';
-    document.getElementById('startBtn').disabled = true;
-    document.getElementById('evoBtn').disabled = true;
-    addLog('err','WS','Verbindung getrennt. Reconnect in 3s...');
+    connected = false;
+    document.getElementById('wsDot').className = 'dot off';
+    document.getElementById('wsLbl').textContent = 'Getrennt';
+    ['btnSwarm','btnPipeline','btnAuto','btnRun'].forEach(function(id){document.getElementById(id).disabled=true});
+    addMsg('err','WS','Verbindung getrennt. Reconnect in 3s...');
     setTimeout(connect, 3000);
   };
-  ws.onerror = function() { addLog('err','WS','Verbindungsfehler'); };
-  ws.onmessage = function(ev) { handleMsg(ev.data); };
+  ws.onerror = function() { addMsg('err','WS','Verbindungsfehler'); };
+  ws.onmessage = function(ev) {
+    var m; try { m = JSON.parse(ev.data); } catch(e) { return; }
+    handle(m);
+  };
 }
 
-function handleMsg(raw) {
-  var m; try { m = JSON.parse(raw); } catch(e) { return; }
+function send(obj) { if (ws && connected) ws.send(JSON.stringify(obj)); }
+
+// ============================================================
+// MESSAGE HANDLER
+// ============================================================
+function handle(m) {
   switch(m.type) {
+    // Models
     case 'models_list':
       var models = m.models || [];
-      addLog('sys','RECV','\u2190 Ollama: ' + models.length + ' Modelle gefunden');
-      document.getElementById('ollamaDot').className = 'status-dot ok';
-      document.getElementById('ollamaLabel').textContent = 'Ollama: ' + models.length + ' Modelle';
+      document.getElementById('olDot').className = 'dot ok';
+      document.getElementById('olLbl').textContent = 'Ollama: ' + models.length;
+      addMsg('sys','OLLAMA','Gefunden: ' + models.join(', '));
       ['selArch','selEval'].forEach(function(id){
         var s = document.getElementById(id); s.innerHTML = '';
-        models.forEach(function(n){ var o=document.createElement('option'); o.value=n; o.textContent=n; s.appendChild(o); });
+        models.forEach(function(n){var o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)});
       });
-      if(models.find(function(x){return x.includes('deepseek')})) document.getElementById('selArch').value = models.find(function(x){return x.includes('deepseek')});
-      if(models.find(function(x){return x.includes('llama')})) document.getElementById('selEval').value = models.find(function(x){return x.includes('llama')});
       break;
+
+    // Pipeline - visual steps
     case 'pipeline_status':
-      var stepMap = {1:1,2:2,3:3,4:4,5:5,6:6};
-      setStep(stepMap[m.step]||1);
-      addLog('pipe','STEP '+m.step+'/'+m.total_steps, m.description);
-      if(m.description.toLowerCase().includes('complete')) {
-        pipelineRunning = false;
-        document.getElementById('startBtn').disabled = false;
-        document.getElementById('startBtn').className = 'start-btn';
-        document.getElementById('startBtn').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Neue Pipeline starten';
-      }
+      updatePipelineViz(m.step, m.total_steps);
+      addMsg('step','STEP ' + m.step + '/' + m.total_steps, m.description);
       break;
     case 'agent_thinking':
-      addLog('ollama','OLLAMA', m.agent + ' (' + m.model + ') denkt nach...');
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b> (' + m.model + ') denkt nach...');
       break;
     case 'agent_response':
-      addLog('ollama','OLLAMA', '<b>' + m.agent + '</b> (' + m.model + '): ' + m.response);
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b>: ' + m.response);
       break;
+
+    // Training - live chart
     case 'training':
-      var pct = (m.epoch / totalEpochs * 100);
-      document.getElementById('progress').className = 'progress show';
-      document.getElementById('metrics').className = 'metrics show';
-      document.getElementById('pbarFill').style.width = pct + '%';
-      document.getElementById('pbarLeft').textContent = 'Epoch ' + m.epoch + '/' + totalEpochs;
-      document.getElementById('pbarRight').textContent = (m.accuracy*100).toFixed(1) + '%';
-      document.getElementById('mAcc').textContent = (m.accuracy*100).toFixed(1) + '%';
-      document.getElementById('mLoss').textContent = m.loss.toFixed(4);
-      triggerTrainingGlow();
-      if(m.epoch % 2 === 0 || m.epoch >= totalEpochs)
-        addLog('train','EPOCH '+m.epoch, 'loss=' + m.loss.toFixed(4) + ' acc=' + (m.accuracy*100).toFixed(1) + '%');
+      var pct = (m.accuracy * 100).toFixed(1);
+      trainLoss.push(m.loss);
+      trainAcc.push(m.accuracy);
+      updateTrainChart();
+      addMsg('train','EPOCH ' + m.epoch, 'Loss=' + m.loss.toFixed(4) + ' Accuracy=' + pct + '%');
       break;
+
+    // Compression
     case 'compression':
-      addLog('igqk','IGQK', m.original_size + ' \u2192 ' + m.compressed_size + ' (' + m.ratio + ')');
-      document.getElementById('mRatio').textContent = m.ratio;
-      document.getElementById('mSize').textContent = m.compressed_size;
+      addMsg('igqk','IGQK', m.original_size + ' &rarr; ' + m.compressed_size + ' (' + m.ratio + ')');
+      addResult([
+        {v:m.original_size, l:'Original', c:'var(--dm)'},
+        {v:m.compressed_size, l:'Komprimiert', c:'var(--gn)'},
+        {v:m.ratio, l:'Ratio', c:'var(--pu)'}
+      ]);
+      break;
+
+    // System
+    case 'system':
+      addMsg('sys','INFO', m.text || '');
       break;
     case 'graph':
-      var nodes = m.nodes||[];
-      addLog('sys','GRAPH', nodes.length + ' Nodes');
-      var sizes = [];
-      nodes.forEach(function(nd){ var x=(nd.label||'').match(/(\d+)/); if(x&&parseInt(x[1])>1) sizes.push(parseInt(x[1])); });
-      if(sizes.length>=2) { update3DNetwork(sizes); document.getElementById('c3dLayers').textContent=sizes.length; document.getElementById('c3dNeurons').textContent=sizes.reduce(function(a,b){return a+b},0); }
-      break;
-    case 'system':
-      addLog('sys','INFO', m.text||'');
+      addMsg('sys','GRAPH', (m.nodes||[]).length + ' Nodes geladen');
       break;
     case 'model_ready':
-      document.getElementById('testerSection').className = 'sb-section tester-section show';
-      addLog('sys','MODEL', 'Modell bereit zum Testen');
+      addMsg('ok','MODELL', 'Trainiertes Modell bereit');
       break;
-    case 'prediction':
-      handlePrediction(m);
+
+    // Autonomous - visual iteration cards
+    case 'autonomous_status':
+      if (m.phase === 'start') {
+        autoIterations = [];
+        addBig('sys', 'Autonomer Modus gestartet (Ziel: ' + (m.target_accuracy*100).toFixed(0) + '%)');
+      } else if (m.phase === 'success') {
+        addBig('ok', 'ZIEL ERREICHT nach ' + m.iteration + ' Versuchen!');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+      } else if (m.phase === 'max_reached') {
+        addMsg('step','ENDE', 'Maximum erreicht. Bestes: ' + (m.best_accuracy*100).toFixed(1) + '%');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+      } else if (m.phase === 'training' && m.config) {
+        addIterCard(m.iteration, m.config.h1, m.config.h2, null, null, 'active');
+      }
       break;
-    case 'evolution_generation':
-      handleEvoGeneration(m);
+    case 'autonomous_result':
+      updateIterCard(m.iteration, m.test_accuracy, m.compression_ratio, m.test_accuracy >= 0.95);
+      addResult([
+        {v:(m.test_accuracy*100).toFixed(1)+'%', l:'Accuracy', c:'var(--gn)'},
+        {v:m.compression_ratio.toFixed(1)+'x', l:'Kompression', c:'var(--pu)'},
+        {v:m.params, l:'Parameter', c:'var(--bl)'}
+      ]);
       break;
-    case 'evolution_individual':
-      handleEvoIndividual(m);
+    case 'autonomous_feedback':
+      addMsg('ai','FEEDBACK', m.feedback);
       break;
-    case 'evolution_best':
-      handleEvoBest(m);
+    case 'autonomous_summary':
+      addMsg('ok','ERGEBNIS', m.summary);
       break;
-    case 'evolution_complete':
-      handleEvoComplete(m);
+    case 'autonomous_design':
+      addMsg('ai','DESIGN', m.response);
       break;
+
+    // Swarm - visual grid
+    case 'swarm_status':
+      addMsg('sys','SWARM', m.phase + (m.vocab_size ? ' (Vocab: ' + m.vocab_size + ' Tokens)' : ''));
+      break;
+    case 'swarm_model':
+      swarmModels.push({id:m.id, d:m.d_model, l:m.layers, p:m.params, loss:null});
+      addMsg('sys','MODELL', '#' + (m.id+1) + ': d=' + m.d_model + ' L=' + m.layers + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_generation':
+      swarmCurrentGen = m.gen;
+      addBig('step', 'Generation ' + m.gen + ' / ' + m.total);
+      addSwarmGrid();
+      document.getElementById('swarmBar').style.display = 'block';
+      document.getElementById('swarmLbl').style.display = 'flex';
+      var pct = (m.gen / m.total * 100);
+      document.getElementById('swarmFill').style.width = pct + '%';
+      document.getElementById('swarmL').textContent = 'Gen ' + m.gen + '/' + m.total;
+      break;
+    case 'swarm_fitness':
+      updateSwarmDot(m.id, m.loss, m.d_model, m.layers);
+      swarmLosses.push(m.loss);
+      var sample = m.sample ? ' &rarr; "' + m.sample.substring(0,30) + '"' : '';
+      addMsg('train','MODELL ' + (m.id+1), 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + sample);
+      break;
+    case 'swarm_best':
+      swarmBestLoss.push(m.loss);
+      updateSwarmChart();
+      addMsg('ok','BESTES', 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_complete':
+      addBig('ok', 'Schwarm-Training abgeschlossen!');
+      if (m.results) {
+        addResult(m.results.slice(0,3).map(function(r){
+          return {v:'#'+r.rank+' d='+r.d_model, l:r.loss.toFixed(3)+' Loss', c:r.rank===1?'var(--gn)':'var(--tx)'};
+        }));
+      }
+      document.getElementById('btnSwarm').disabled = false;
+      document.getElementById('btnSwarm').classList.remove('running');
+      document.getElementById('btnSwarm').textContent = 'Schwarm trainieren';
+      document.getElementById('swarmFill').style.width = '100%';
+      document.getElementById('swarmR').textContent = 'Fertig!';
+      break;
+    case 'swarm_saved':
+      addMsg('ok','GESPEICHERT', 'Modell: ' + m.model_path + '<br>Tokenizer: ' + m.tokenizer_path);
+      break;
+
+    // Code execution
+    case 'exec_result':
+      if (m.error) {
+        addMsg('err','FEHLER', m.error);
+      } else if (m.output) {
+        m.output.forEach(function(line) { addMsg('sys','OUTPUT', line); });
+      }
+      document.getElementById('btnRun').disabled = false;
+      document.getElementById('btnRun').classList.remove('running');
+      break;
+    case 'repl_result':
+      if (m.error) addMsg('err','FEHLER', m.error);
+      else addMsg('sys','REPL', m.output || '');
+      break;
+
     default:
-      addLog('sys',m.type, JSON.stringify(m).substring(0,120));
+      addMsg('sys', m.type.toUpperCase(), JSON.stringify(m).substring(0,100));
   }
 }
 
 // ============================================================
-// START PIPELINE
+// ACTIONS
 // ============================================================
-document.getElementById('startBtn').addEventListener('click', function() {
-  var task = document.getElementById('task').value.trim();
-  if(!task) { document.getElementById('task').focus(); document.getElementById('task').style.borderColor='var(--red)'; setTimeout(function(){document.getElementById('task').style.borderColor=''},1500); return; }
-  if(pipelineRunning) return;
-  pipelineRunning = true;
-  totalEpochs = parseInt(document.getElementById('epochs').value);
+function doSwarm() {
+  var pop = parseInt(document.getElementById('inPop').value) || 6;
+  var gen = parseInt(document.getElementById('inGen').value) || 3;
+  var data = document.getElementById('selData').value;
+  swarmModels = []; swarmLosses = []; swarmBestLoss = []; swarmCurrentGen = 0;
+  send({type:'start_swarm', population:pop, generations:gen, data:data});
+  document.getElementById('btnSwarm').disabled = true;
+  document.getElementById('btnSwarm').classList.add('running');
+  document.getElementById('btnSwarm').textContent = 'Laeuft...';
+  document.getElementById('swarmBar').style.display = 'block';
+  document.getElementById('swarmLbl').style.display = 'flex';
+  document.getElementById('swarmFill').style.width = '0%';
+  document.getElementById('swarmL').textContent = 'Startet...';
+  document.getElementById('swarmR').textContent = '';
+  addBig('sys', 'Schwarm-Training gestartet (' + pop + ' Modelle, ' + gen + ' Generationen)');
+}
 
-  var msg = {
+function doPipeline() {
+  var task = document.getElementById('taskText').value.trim();
+  if (!task) { document.getElementById('taskText').focus(); return; }
+  send({
     type:'start_pipeline',
-    task: task,
+    task:task,
     architect_model: document.getElementById('selArch').value,
     evaluator_model: document.getElementById('selEval').value,
-    epochs: totalEpochs,
-    dataset: document.getElementById('dataset').value,
+    epochs: 10,
+    dataset: 'synthetic',
     compress: true
-  };
-
-  ws.send(JSON.stringify(msg));
-  addLog('pipe','START', '\u2192 Pipeline gestartet: "' + task + '"');
-  addLog('sys','CONFIG', 'Architekt=' + msg.architect_model + ' Evaluator=' + msg.evaluator_model + ' Epochs=' + totalEpochs);
-  setStep(1);
-
-  this.disabled = true;
-  this.className = 'start-btn running';
-  this.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Pipeline l\u00e4uft...';
-
-  document.getElementById('progress').className = 'progress show';
-  document.getElementById('pbarFill').style.width = '0%';
-  document.getElementById('metrics').className = 'metrics';
-  document.getElementById('mAcc').textContent = '--';
-  document.getElementById('mLoss').textContent = '--';
-  document.getElementById('mRatio').textContent = '--';
-  document.getElementById('mSize').textContent = '--';
-});
-
-// ============================================================
-// PURE CANVAS 2D NEURAL NETWORK (zero external dependencies)
-// ============================================================
-var netCanvas, netCtx, layerSizes = [784, 128, 64, 10];
-var glowVal = 0, rotAngle = 0, activeConns = [];
-
-function init3D() {
-  var c = document.getElementById('canvas3d');
-  netCanvas = document.createElement('canvas');
-  netCanvas.style.width = '100%';
-  netCanvas.style.height = '100%';
-  c.insertBefore(netCanvas, c.firstChild);
-  netCtx = netCanvas.getContext('2d');
-  resizeNetCanvas();
-  window.addEventListener('resize', resizeNetCanvas);
-  animNet();
+  });
+  document.getElementById('btnPipeline').disabled = true;
+  document.getElementById('btnPipeline').classList.add('running');
+  addBig('sys', 'KI-Pipeline gestartet: "' + task + '"');
 }
 
-function resizeNetCanvas() {
-  var c = document.getElementById('canvas3d');
-  netCanvas.width = c.clientWidth * window.devicePixelRatio;
-  netCanvas.height = c.clientHeight * window.devicePixelRatio;
-  netCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+function doAutonomous() {
+  var target = parseInt(document.getElementById('inTarget').value) || 95;
+  var maxIter = parseInt(document.getElementById('inMaxIter').value) || 5;
+  send({
+    type:'start_autonomous',
+    task: document.getElementById('taskText').value || 'Build a classifier',
+    model: document.getElementById('selArch').value,
+    target_accuracy: target / 100,
+    max_iterations: maxIter,
+    dataset: 'synthetic'
+  });
+  document.getElementById('btnAuto').disabled = true;
+  document.getElementById('btnAuto').classList.add('running');
 }
 
-function drawNetwork(ctx, w, h, sizes, glow, angle) {
-  ctx.clearRect(0, 0, w, h);
-  var nL = sizes.length, maxN = 20;
-  var padX = 60, padY = 30;
-  var layerW = (w - padX * 2) / (nL - 1);
-  var colors = ['#58a6ff', '#3fb950', '#3fb950', '#3fb950', '#3fb950', '#f97316'];
+function doRun() {
+  var code = document.getElementById('codeText').value;
+  if (!code.trim()) return;
+  send({type:'exec', code:code});
+  document.getElementById('btnRun').disabled = true;
+  document.getElementById('btnRun').classList.add('running');
+  addMsg('sys','CODE','Ausfuehren...');
+}
 
-  // Compute neuron positions
-  var neurons = [];
-  for (var l = 0; l < nL; l++) {
-    var n = Math.min(sizes[l], maxN);
-    var layerH = (h - padY * 2);
-    var spacing = Math.min(layerH / (n + 1), 20);
-    var startY = h / 2 - (n - 1) * spacing / 2;
-    var x = padX + l * layerW;
-    // Slight 3D wobble
-    var wobX = Math.sin(angle + l * 0.8) * 8;
-    var wobY = Math.cos(angle + l * 0.5) * 4;
-    var layer = [];
-    for (var i = 0; i < n; i++) {
-      layer.push({ x: x + wobX, y: startY + i * spacing + wobY });
-    }
-    neurons.push(layer);
+// ============================================================
+// LIVE VISUALIZATIONS
+// ============================================================
+
+// --- Training Chart (Loss + Accuracy over epochs) ---
+var trainLoss = [], trainAcc = [], trainChartEl = null;
+
+function updateTrainChart() {
+  if (!trainChartEl) {
+    var feed = document.getElementById('feed');
+    trainChartEl = document.createElement('div');
+    trainChartEl.className = 'live-chart';
+    trainChartEl.innerHTML = '<div class="chart-title">Training Verlauf</div><canvas id="trainCanvas" width="600" height="120"></canvas><div class="chart-legend"><span class="leg-loss">Loss</span><span class="leg-acc">Accuracy</span></div>';
+    feed.appendChild(trainChartEl);
+  }
+  var c = document.getElementById('trainCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  // Background grid
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 0.5;
+  for (var i = 0; i < 5; i++) {
+    var y = h * i / 4;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
   }
 
-  // Draw connections
-  for (var l = 1; l < nL; l++) {
-    var prev = neurons[l - 1], curr = neurons[l];
-    var maxC = Math.min(prev.length * curr.length, 120);
-    var step = Math.max(1, Math.floor(prev.length * curr.length / maxC));
-    var cnt = 0;
-    for (var pi = 0; pi < prev.length; pi++) {
-      for (var ci = 0; ci < curr.length; ci++) {
-        cnt++;
-        if (cnt % step !== 0) continue;
-        var isActive = activeConns.some(function(ac) { return ac.l === l && ac.p === pi && ac.c === ci; });
-        ctx.beginPath();
-        ctx.moveTo(prev[pi].x, prev[pi].y);
-        ctx.lineTo(curr[ci].x, curr[ci].y);
-        if (isActive) {
-          ctx.strokeStyle = 'rgba(188,140,255,0.5)';
-          ctx.lineWidth = 1.5;
-        } else {
-          ctx.strokeStyle = 'rgba(33,38,45,0.3)';
-          ctx.lineWidth = 0.5;
-        }
-        ctx.stroke();
-      }
-    }
-  }
+  if (trainLoss.length < 2) return;
+  var n = trainLoss.length;
+  var maxLoss = Math.max.apply(null, trainLoss) * 1.1;
 
-  // Draw neurons
-  for (var l = 0; l < nL; l++) {
-    var col = l === 0 ? colors[0] : l === nL - 1 ? colors[5] : colors[1];
-    var r = l === 0 || l === nL - 1 ? 4 : 5;
-    for (var i = 0; i < neurons[l].length; i++) {
-      var nx = neurons[l][i].x, ny = neurons[l][i].y;
-      var intensity = glow > 0 ? 0.3 + glow * 0.7 * Math.abs(Math.sin(Date.now() * 0.003 + l * 2 + i)) : 0.3;
-      // Glow effect
-      if (glow > 0) {
-        ctx.beginPath();
-        ctx.arc(nx, ny, r + 4, 0, Math.PI * 2);
-        ctx.fillStyle = col.replace(')', ',' + intensity * 0.3 + ')').replace('rgb', 'rgba').replace('#', '');
-        // Use hex to rgba
-        var gr = ctx.createRadialGradient(nx, ny, r, nx, ny, r + 6);
-        gr.addColorStop(0, col + Math.floor(intensity * 60).toString(16).padStart(2,'0'));
-        gr.addColorStop(1, col + '00');
-        ctx.fillStyle = gr;
-        ctx.fill();
-      }
-      // Neuron dot
-      ctx.beginPath();
-      ctx.arc(nx, ny, r, 0, Math.PI * 2);
-      ctx.fillStyle = col;
-      ctx.globalAlpha = 0.4 + intensity * 0.6;
-      ctx.fill();
-      ctx.globalAlpha = 1;
+  // Loss line (orange)
+  ctx.beginPath();
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - (trainLoss[i]/maxLoss) * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Accuracy line (green)
+  ctx.beginPath();
+  ctx.strokeStyle = '#3fb950';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - trainAcc[i] * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#7d8590';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('Loss: ' + trainLoss[n-1].toFixed(4), 4, 12);
+  ctx.fillText('Acc: ' + (trainAcc[n-1]*100).toFixed(1) + '%', 4, 24);
+  ctx.textAlign = 'right';
+  ctx.fillText('Epoch ' + n, w-4, h-4);
+
+  trainChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// --- Pipeline Step Visualization ---
+var pipeStepNames = ['Aufgabe','Architekt','Build','Training','IGQK','Evaluator'];
+var pipeVizEl = null;
+
+function updatePipelineViz(step, total) {
+  if (!pipeVizEl) {
+    var feed = document.getElementById('feed');
+    pipeVizEl = document.createElement('div');
+    pipeVizEl.className = 'pipe-steps';
+    pipeVizEl.id = 'pipeViz';
+    var html = '';
+    for (var i = 0; i < pipeStepNames.length; i++) {
+      if (i > 0) html += '<span class="pipe-arrow">&rarr;</span>';
+      html += '<span class="pipe-step" id="ps' + i + '">' + pipeStepNames[i] + '</span>';
     }
-    // Truncation dots
-    if (sizes[l] > maxN) {
-      var lx = neurons[l][0].x;
-      var ly = neurons[l][neurons[l].length - 1].y + 15;
-      ctx.fillStyle = '#484f58';
-      ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
-      ctx.textAlign = 'center';
-      ctx.fillText('...' + (sizes[l] - maxN) + ' more', lx, ly);
-    }
-    // Layer label
-    var labelX = neurons[l][0].x;
-    var labelY = Math.max(neurons[l][0].y - 15, 14);
-    ctx.fillStyle = '#7d8590';
-    ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+    pipeVizEl.innerHTML = html;
+    feed.appendChild(pipeVizEl);
+  }
+  for (var i = 0; i < pipeStepNames.length; i++) {
+    var el = document.getElementById('ps' + i);
+    if (!el) continue;
+    if (i < step - 1) el.className = 'pipe-step done';
+    else if (i === step - 1) el.className = 'pipe-step active';
+    else el.className = 'pipe-step';
+  }
+  // Arrows
+  var arrows = pipeVizEl.querySelectorAll('.pipe-arrow');
+  arrows.forEach(function(a, idx) {
+    a.className = idx < step - 1 ? 'pipe-arrow active' : 'pipe-arrow';
+  });
+}
+
+// --- Swarm Grid Visualization ---
+var swarmModels = [], swarmLosses = [], swarmBestLoss = [], swarmCurrentGen = 0;
+var swarmGridEl = null, swarmChartEl = null;
+
+function addSwarmGrid() {
+  var feed = document.getElementById('feed');
+  swarmGridEl = document.createElement('div');
+  swarmGridEl.className = 'swarm-grid';
+  swarmGridEl.id = 'swarmGrid' + swarmCurrentGen;
+  var html = '';
+  for (var i = 0; i < swarmModels.length; i++) {
+    var m = swarmModels[i];
+    html += '<div class="swarm-dot" id="sd' + swarmCurrentGen + '_' + i + '" title="d=' + m.d + ' L=' + m.l + '">' + (i+1) + '</div>';
+  }
+  swarmGridEl.innerHTML = html;
+  feed.appendChild(swarmGridEl);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateSwarmDot(id, loss, d, layers) {
+  var el = document.getElementById('sd' + swarmCurrentGen + '_' + id);
+  if (!el) return;
+  // Color based on loss: lower = greener
+  var minL = 5.5, maxL = 7.0;
+  var t = Math.max(0, Math.min(1, (loss - minL) / (maxL - minL)));
+  var r = Math.round(249 * t + 63 * (1-t));
+  var g = Math.round(115 * t + 185 * (1-t));
+  var b = Math.round(22 * t + 80 * (1-t));
+  el.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
+  el.style.color = '#000';
+  el.title = 'd=' + d + ' L=' + layers + ' Loss=' + loss.toFixed(3);
+}
+
+function updateSwarmChart() {
+  if (swarmBestLoss.length < 2) return;
+  if (!swarmChartEl) {
+    var feed = document.getElementById('feed');
+    swarmChartEl = document.createElement('div');
+    swarmChartEl.className = 'live-chart';
+    swarmChartEl.innerHTML = '<div class="chart-title">Bester Loss pro Generation</div><canvas id="swarmCanvas" width="600" height="80"></canvas><div class="chart-legend"><span class="leg-best">Best Loss</span></div>';
+    feed.appendChild(swarmChartEl);
+  }
+  var c = document.getElementById('swarmCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  var n = swarmBestLoss.length;
+  var maxL = Math.max.apply(null, swarmBestLoss) * 1.05;
+  var minL = Math.min.apply(null, swarmBestLoss) * 0.95;
+
+  // Bars
+  var barW = Math.min(60, (w - 20) / n);
+  for (var i = 0; i < n; i++) {
+    var x = 10 + i * (barW + 4);
+    var barH = ((swarmBestLoss[i] - minL) / (maxL - minL)) * (h - 30);
+    var y = h - 20 - barH;
+
+    ctx.fillStyle = i === n-1 ? '#3fb950' : '#bc8cff';
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = '9px system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText(sizes[l], labelX, labelY);
+    ctx.fillText(swarmBestLoss[i].toFixed(3), x + barW/2, y - 4);
+    ctx.fillStyle = '#7d8590';
+    ctx.fillText('Gen ' + (i+1), x + barW/2, h - 6);
   }
-
-  // Update stats
-  document.getElementById('c3dLayers').textContent = sizes.length;
-  document.getElementById('c3dNeurons').textContent = sizes.reduce(function(a, b) { return a + b; }, 0);
-  var params = 0;
-  for (var i = 1; i < sizes.length; i++) params += sizes[i - 1] * sizes[i] + sizes[i];
-  document.getElementById('c3dParams').textContent = params > 1000 ? (params / 1000).toFixed(1) + 'K' : params;
+  swarmChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
-function animNet() {
-  requestAnimationFrame(animNet);
-  if (!netCanvas || !netCtx) return;
-  var w = netCanvas.width / window.devicePixelRatio;
-  var h = netCanvas.height / window.devicePixelRatio;
-  if (w < 10 || h < 10) return;
+// --- Autonomous Iteration Cards ---
+var autoIterations = [];
 
-  rotAngle += 0.008;
-  if (glowVal > 0) {
-    glowVal -= 0.008;
-    // Flash random connections
-    if (Math.random() < 0.15 && layerSizes.length > 1) {
-      var rl = 1 + Math.floor(Math.random() * (layerSizes.length - 1));
-      activeConns.push({ l: rl, p: Math.floor(Math.random() * 20), c: Math.floor(Math.random() * 20), t: Date.now() });
-    }
-  }
-  // Remove old active connections
-  var now = Date.now();
-  activeConns = activeConns.filter(function(ac) { return now - ac.t < 200; });
-
-  netCtx.save();
-  netCtx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
-  drawNetwork(netCtx, w, h, layerSizes, glowVal, rotAngle);
-  netCtx.restore();
+function addIterCard(iter, h1, h2, acc, ratio, status) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'iter-card';
+  d.id = 'iter' + iter;
+  var numCls = status === 'active' ? '' : (acc && acc >= 0.95 ? 'win' : (acc ? 'fail' : ''));
+  d.innerHTML = '<div class="iter-num ' + numCls + '">' + iter + '</div>' +
+    '<div class="iter-body">' +
+    '<div class="iter-arch">784 &rarr; ' + h1 + ' &rarr; ' + h2 + ' &rarr; 10</div>' +
+    '<div class="iter-metrics">' +
+    '<span class="iter-metric">Accuracy: <b id="iterAcc' + iter + '">' + (acc ? (acc*100).toFixed(1)+'%' : '...') + '</b></span>' +
+    '<span class="iter-metric">Kompression: <b id="iterRatio' + iter + '">' + (ratio ? ratio.toFixed(1)+'x' : '...') + '</b></span>' +
+    '</div></div>';
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
 }
 
-function update3DNetwork(s) { layerSizes = s; }
-function triggerTrainingGlow() { glowVal = 1.0; }
-
-// ============================================================
-// DRAWING CANVAS — Model Tester
-// ============================================================
-var drawCtx = null, isDrawing = false;
-
-function initDrawCanvas() {
-  var canvas = document.getElementById('drawCanvas');
-  drawCtx = canvas.getContext('2d');
-  drawCtx.fillStyle = '#000';
-  drawCtx.fillRect(0, 0, 280, 280);
-  drawCtx.strokeStyle = '#fff';
-  drawCtx.lineWidth = 16;
-  drawCtx.lineCap = 'round';
-  drawCtx.lineJoin = 'round';
-
-  function getPos(e) {
-    var rect = canvas.getBoundingClientRect();
-    var clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    var clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  }
-
-  canvas.addEventListener('mousedown', function(e) { isDrawing = true; drawCtx.beginPath(); var p = getPos(e); drawCtx.moveTo(p.x, p.y); });
-  canvas.addEventListener('mousemove', function(e) { if (!isDrawing) return; var p = getPos(e); drawCtx.lineTo(p.x, p.y); drawCtx.stroke(); });
-  canvas.addEventListener('mouseup', function() { isDrawing = false; });
-  canvas.addEventListener('mouseleave', function() { isDrawing = false; });
-
-  canvas.addEventListener('touchstart', function(e) { e.preventDefault(); isDrawing = true; drawCtx.beginPath(); var p = getPos(e); drawCtx.moveTo(p.x, p.y); }, {passive:false});
-  canvas.addEventListener('touchmove', function(e) { e.preventDefault(); if (!isDrawing) return; var p = getPos(e); drawCtx.lineTo(p.x, p.y); drawCtx.stroke(); }, {passive:false});
-  canvas.addEventListener('touchend', function(e) { e.preventDefault(); isDrawing = false; }, {passive:false});
-
-  // Init confidence bars
-  var barsHtml = '';
-  for (var d = 0; d < 10; d++) {
-    barsHtml += '<div class="conf-row"><span class="conf-label">' + d + '</span><div class="conf-bar-bg"><div class="conf-bar-fill" id="confBar' + d + '" style="width:0%"></div></div><span class="conf-val" id="confVal' + d + '">0%</span></div>';
-  }
-  document.getElementById('confBars').innerHTML = barsHtml;
+function updateIterCard(iter, acc, ratio, success) {
+  var numEl = document.querySelector('#iter' + iter + ' .iter-num');
+  if (numEl) numEl.className = 'iter-num ' + (success ? 'win' : 'fail');
+  var accEl = document.getElementById('iterAcc' + iter);
+  if (accEl) { accEl.textContent = (acc*100).toFixed(1) + '%'; accEl.style.color = success ? 'var(--gn)' : 'var(--yl)'; }
+  var ratEl = document.getElementById('iterRatio' + iter);
+  if (ratEl) ratEl.textContent = ratio.toFixed(1) + 'x';
 }
 
-document.getElementById('btnClear').addEventListener('click', function() {
-  drawCtx.fillStyle = '#000';
-  drawCtx.fillRect(0, 0, 280, 280);
-  drawCtx.strokeStyle = '#fff';
-  document.getElementById('predDigit').textContent = '?';
-  document.getElementById('predDigit').style.color = 'var(--text-dim)';
-  for (var d = 0; d < 10; d++) {
-    document.getElementById('confBar' + d).style.width = '0%';
-    document.getElementById('confBar' + d).className = 'conf-bar-fill';
-    document.getElementById('confVal' + d).textContent = '0%';
-  }
-});
-
-document.getElementById('btnPredict').addEventListener('click', function() {
-  if (!ws || ws.readyState !== 1) return;
-
-  // Downscale 280x280 to 28x28
-  var tempCanvas = document.createElement('canvas');
-  tempCanvas.width = 28;
-  tempCanvas.height = 28;
-  var tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(document.getElementById('drawCanvas'), 0, 0, 28, 28);
-
-  var imgData = tempCtx.getImageData(0, 0, 28, 28);
-  var pixels = [];
-  for (var i = 0; i < 784; i++) {
-    // Use red channel (grayscale), normalize to 0-1
-    pixels.push(imgData.data[i * 4] / 255.0);
-  }
-
-  ws.send(JSON.stringify({ type: 'predict', pixels: pixels }));
-  addLog('sys','PREDICT','Sende 28x28 Bild an Modell...');
-});
-
-function handlePrediction(m) {
-  if (m.error) {
-    addLog('err','PREDICT', m.error);
-    document.getElementById('predDigit').textContent = '!';
-    document.getElementById('predDigit').style.color = 'var(--red)';
-    return;
-  }
-  var digit = m.digit;
-  var conf = m.confidence || [];
-  document.getElementById('predDigit').textContent = digit;
-  document.getElementById('predDigit').style.color = 'var(--green)';
-
-  var maxConf = 0;
-  for (var d = 0; d < 10; d++) {
-    if (conf[d] > maxConf) maxConf = conf[d];
-  }
-
-  for (var d = 0; d < 10; d++) {
-    var pct = ((conf[d] || 0) * 100);
-    document.getElementById('confBar' + d).style.width = pct + '%';
-    document.getElementById('confBar' + d).className = (d === digit) ? 'conf-bar-fill top' : 'conf-bar-fill';
-    document.getElementById('confVal' + d).textContent = pct.toFixed(1) + '%';
-  }
-
-  addLog('train','PREDICT','Erkannt: ' + digit + ' (' + (conf[digit] * 100).toFixed(1) + '% Konfidenz)');
-}
-
-// ============================================================
-// NEUROEVOLUTION
-// ============================================================
-var evoCurrentGen = 0;
-
-document.getElementById('evoBtn').addEventListener('click', function() {
-  if (!ws || ws.readyState !== 1 || evolutionRunning) return;
-  evolutionRunning = true;
-  evoCurrentGen = 0;
-
-  var pop = parseInt(document.getElementById('evoPop').value);
-  var gen = parseInt(document.getElementById('evoGen').value);
-
-  ws.send(JSON.stringify({
-    type: 'start_evolution',
-    population: pop,
-    generations: gen,
-    epochs_per: 3
-  }));
-
-  this.disabled = true;
-  this.className = 'evo-btn running';
-  this.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83"/></svg> Evolution l\u00e4uft...';
-
-  document.getElementById('evoGrid').innerHTML = '';
-  document.getElementById('evoGrid').className = 'evo-grid show';
-  document.getElementById('evoResult').className = 'evo-result';
-  document.getElementById('evoStatus').textContent = 'Starte Evolution...';
-
-  addLog('pipe','EVOLUTION', 'Neuroevolution gestartet: Pop=' + pop + ', Gen=' + gen);
-});
-
-function handleEvoGeneration(m) {
-  evoCurrentGen = m.generation;
-  document.getElementById('evoStatus').textContent = 'Generation ' + m.generation + '/' + m.total_generations + ' (' + m.population_size + ' Modelle)';
-  // Add a new row for this generation
-  var row = document.createElement('div');
-  row.className = 'evo-gen-row';
-  row.id = 'evoGenRow' + m.generation;
-  row.innerHTML = '<span class="evo-gen-label">G' + m.generation + '</span>';
-  document.getElementById('evoGrid').appendChild(row);
-  addLog('igqk','EVO', 'Generation ' + m.generation + '/' + m.total_generations);
-}
-
-function handleEvoIndividual(m) {
-  var row = document.getElementById('evoGenRow' + m.generation);
-  if (!row) return;
-
-  var dot = document.createElement('span');
-  dot.className = 'evo-dot';
-  // Color based on accuracy: red (0%) -> yellow (50%) -> green (100%)
-  var acc = m.accuracy;
-  var r, g, b;
-  if (acc < 0.5) {
-    r = 220; g = Math.floor(acc * 2 * 180); b = 40;
-  } else {
-    r = Math.floor((1 - (acc - 0.5) * 2) * 220); g = 180; b = 40;
-  }
-  // Size based on accuracy (8-18px)
-  var size = 8 + Math.floor(acc * 10);
-  dot.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
-  dot.style.width = size + 'px';
-  dot.style.height = size + 'px';
-  dot.title = m.hidden1 + 'x' + m.hidden2 + ' = ' + (acc * 100).toFixed(1) + '%';
-  dot.setAttribute('data-idx', m.index);
-  row.appendChild(dot);
-}
-
-function handleEvoBest(m) {
-  // Highlight the best dot in this generation
-  var row = document.getElementById('evoGenRow' + m.generation);
-  if (row) {
-    var dots = row.querySelectorAll('.evo-dot');
-    // The first dot (index 0 after sort) is best, but we mark by checking data-idx
-    // Actually, best is always index 0 after sort, but we get the generation's row
-    // Just highlight the last-added dot that matches
-    if (dots.length > 0) {
-      // Find dot with index 0 (the best after sort, reported separately)
-      // Mark the first dot as best
-      dots[0].className = 'evo-dot best';
-    }
-  }
-  document.getElementById('evoStatus').textContent = 'Gen ' + m.generation + ' Bestes: ' + m.hidden1 + 'x' + m.hidden2 + ' (' + (m.accuracy * 100).toFixed(1) + '%)';
-  addLog('igqk','EVO BEST', 'Gen ' + m.generation + ': ' + m.hidden1 + '\u00d7' + m.hidden2 + ' = ' + (m.accuracy * 100).toFixed(1) + '%');
-}
-
-function handleEvoComplete(m) {
-  evolutionRunning = false;
-  var btn = document.getElementById('evoBtn');
-  btn.disabled = false;
-  btn.className = 'evo-btn';
-  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0110 10c0 5.52-4.48 10-10 10S2 17.52 2 12"/><path d="M22 12H18"/></svg> Evolution starten';
-
-  document.getElementById('evoResult').className = 'evo-result show';
-  document.getElementById('evoArch').textContent = '784 \u2192 ' + m.best_hidden1 + ' \u2192 ' + m.best_hidden2 + ' \u2192 10';
-  document.getElementById('evoAcc').textContent = 'Finale Accuracy: ' + (m.final_accuracy * 100).toFixed(1) + '%';
-  document.getElementById('evoStatus').textContent = 'Evolution abgeschlossen';
-
-  // Show model tester since evolution stores the model too
-  document.getElementById('testerSection').className = 'sb-section tester-section show';
-
-  addLog('train','EVO DONE', 'Bestes Modell: 784\u2192' + m.best_hidden1 + '\u2192' + m.best_hidden2 + '\u219210, Acc=' + (m.final_accuracy * 100).toFixed(1) + '%');
+// Reset state on new actions
+function resetViz() {
+  trainLoss = []; trainAcc = []; trainChartEl = null;
+  pipeVizEl = null;
+  swarmGridEl = null; swarmChartEl = null;
+  autoIterations = [];
 }
 
 // ============================================================
 // INIT
 // ============================================================
-addLog('sys','SYSTEM','QLANG Pipeline Monitor gestartet');
 connect();
-setTimeout(init3D, 100);
-setTimeout(initDrawCanvas, 100);
 </script>
 </body>
 </html>

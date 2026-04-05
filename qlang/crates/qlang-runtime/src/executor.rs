@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+use qlang_core::binary;
+use qlang_core::cache::{CacheEntry, ComputationCache};
+use qlang_core::crypto::sha256;
 use qlang_core::graph::{Graph, NodeId};
 use qlang_core::ops::Op;
 use qlang_core::tensor::TensorData;
@@ -21,6 +24,8 @@ pub struct ExecutionStats {
     pub nodes_executed: usize,
     pub quantum_ops: usize,
     pub total_flops: u64,
+    /// Whether this result was served from the computation cache.
+    pub cache_hit: bool,
 }
 
 /// Errors during graph execution.
@@ -47,11 +52,49 @@ pub enum ExecutionError {
 /// This is the Phase 1 interpreter. It executes nodes one-by-one
 /// in topological order, passing tensors along edges.
 ///
+/// Uses a content-addressable computation cache: if the same graph
+/// with the same inputs was executed before, the cached result is
+/// returned without recomputation.
+///
 /// Phase 2 will JIT-compile the graph to native code via LLVM.
 pub fn execute(
     graph: &Graph,
     inputs: HashMap<String, TensorData>,
 ) -> Result<ExecutionResult, ExecutionError> {
+    // --- Computation cache lookup ---
+    // Only cache deterministic graphs (no Measure, Collapse, Dropout, Ollama ops)
+    let all_deterministic = graph.nodes.iter().all(|n| n.op.is_deterministic());
+
+    let graph_hash = binary::content_hash(graph);
+
+    // Collect input hashes in a deterministic order (sorted by name)
+    let mut input_names: Vec<&String> = inputs.keys().collect();
+    input_names.sort();
+    let input_hashes: Vec<[u8; 32]> = input_names
+        .iter()
+        .map(|name| sha256(inputs[*name].as_bytes()))
+        .collect();
+    let input_hash_refs: Vec<&[u8]> = input_hashes.iter().map(|h| h.as_slice()).collect();
+    let cache_key = ComputationCache::cache_key(&graph_hash, &input_hash_refs);
+
+    if all_deterministic {
+        let cached_outputs = ComputationCache::global()
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.get(&cache_key).map(|e| e.outputs.clone()));
+        if let Some(outputs) = cached_outputs {
+            return Ok(ExecutionResult {
+                outputs,
+                stats: ExecutionStats {
+                    cache_hit: true,
+                    ..Default::default()
+                },
+            });
+        }
+    }
+
+    let compute_start = std::time::Instant::now();
+
     // 1. Verify the graph
     let verification = verify::verify_graph(graph);
     if !verification.is_ok() {
@@ -378,6 +421,21 @@ pub fn execute(
                 outputs.insert(name.clone(), data.clone());
             }
         }
+    }
+
+    // --- Store result in computation cache ---
+    if all_deterministic {
+        let compute_time_us = compute_start.elapsed().as_micros() as u64;
+        let _ = ComputationCache::global().lock().map(|mut guard| {
+            guard.insert(
+                cache_key,
+                CacheEntry {
+                    outputs: outputs.clone(),
+                    compute_time_us,
+                    created: std::time::Instant::now(),
+                },
+            );
+        });
     }
 
     Ok(ExecutionResult { outputs, stats })

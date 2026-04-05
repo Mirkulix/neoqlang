@@ -135,6 +135,90 @@ pub struct AgentId {
     pub capabilities: Vec<Capability>,
 }
 
+// ================================================================
+// Agent Coordination — Roles, Status, and Teams
+// ================================================================
+
+/// The role an agent plays in a coordinated team.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AgentRole {
+    /// Designs model architectures
+    Architect,
+    /// Trains models
+    Trainer,
+    /// Compresses models (IGQK)
+    Compressor,
+    /// Evaluates results
+    Evaluator,
+    /// Finds/prepares data
+    DataCollector,
+    /// Deploys models (WASM, native)
+    Deployer,
+    /// Monitors system health
+    Monitor,
+    /// Orchestrates other agents
+    Coordinator,
+}
+
+/// Tracks the current status of an agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AgentStatus {
+    Idle,
+    Thinking,
+    Working { progress: f32, description: String },
+    WaitingForInput,
+    Done { result: String },
+    Error { message: String },
+}
+
+/// A coordinated team of agents working on a shared task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub name: String,
+    pub agents: Vec<TeamMember>,
+    pub task: String,
+    pub status: AgentStatus,
+}
+
+/// A single member within a [`Team`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub agent: AgentId,
+    pub role: AgentRole,
+    pub status: AgentStatus,
+    /// Optional Ollama model name assigned to this member.
+    pub model: Option<String>,
+}
+
+impl Team {
+    /// Create a new team with the given name and task.
+    pub fn new(name: &str, task: &str) -> Self {
+        Team {
+            name: name.to_string(),
+            agents: Vec::new(),
+            task: task.to_string(),
+            status: AgentStatus::Idle,
+        }
+    }
+
+    /// Add a member to the team.
+    pub fn add_member(&mut self, agent: AgentId, role: AgentRole, model: Option<String>) {
+        self.agents.push(TeamMember {
+            agent,
+            role,
+            status: AgentStatus::Idle,
+            model,
+        });
+    }
+
+    /// Find the first team member with a matching role.
+    pub fn get_by_role(&self, role: &AgentRole) -> Option<&TeamMember> {
+        self.agents
+            .iter()
+            .find(|m| std::mem::discriminant(&m.role) == std::mem::discriminant(role))
+    }
+}
+
 /// What an agent can do.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Capability {
@@ -467,5 +551,134 @@ mod tests {
         assert!(!json.contains("signature"));
         assert!(!json.contains("signer_pubkey"));
         assert!(!json.contains("graph_hash"));
+    }
+
+    // ================================================================
+    // Agent coordination tests
+    // ================================================================
+
+    #[test]
+    fn team_creation_and_members() {
+        let mut team = Team::new("mnist-squad", "Train a digit classifier");
+        assert_eq!(team.name, "mnist-squad");
+        assert_eq!(team.task, "Train a digit classifier");
+        assert_eq!(team.status, AgentStatus::Idle);
+        assert!(team.agents.is_empty());
+
+        team.add_member(
+            trainer_agent(),
+            AgentRole::Trainer,
+            Some("deepseek-r1:1.5b".into()),
+        );
+        team.add_member(
+            compressor_agent(),
+            AgentRole::Compressor,
+            None,
+        );
+
+        assert_eq!(team.agents.len(), 2);
+        assert_eq!(team.agents[0].role, AgentRole::Trainer);
+        assert_eq!(team.agents[0].model, Some("deepseek-r1:1.5b".into()));
+        assert_eq!(team.agents[1].role, AgentRole::Compressor);
+        assert_eq!(team.agents[1].model, None);
+    }
+
+    #[test]
+    fn agent_status_transitions() {
+        let mut member = TeamMember {
+            agent: trainer_agent(),
+            role: AgentRole::Trainer,
+            status: AgentStatus::Idle,
+            model: None,
+        };
+
+        assert_eq!(member.status, AgentStatus::Idle);
+
+        member.status = AgentStatus::Thinking;
+        assert_eq!(member.status, AgentStatus::Thinking);
+
+        member.status = AgentStatus::Working {
+            progress: 0.42,
+            description: "Training epoch 5/10".into(),
+        };
+        if let AgentStatus::Working { progress, description } = &member.status {
+            assert!((progress - 0.42).abs() < f32::EPSILON);
+            assert_eq!(description, "Training epoch 5/10");
+        } else {
+            panic!("expected Working status");
+        }
+
+        member.status = AgentStatus::Done { result: "accuracy=0.97".into() };
+        assert_eq!(member.status, AgentStatus::Done { result: "accuracy=0.97".into() });
+
+        member.status = AgentStatus::Error { message: "OOM".into() };
+        assert_eq!(member.status, AgentStatus::Error { message: "OOM".into() });
+    }
+
+    #[test]
+    fn team_get_by_role() {
+        let mut team = Team::new("test-team", "test task");
+
+        team.add_member(trainer_agent(), AgentRole::Trainer, None);
+        team.add_member(compressor_agent(), AgentRole::Compressor, None);
+        team.add_member(
+            AgentId {
+                name: "architect".into(),
+                capabilities: vec![Capability::Optimize],
+            },
+            AgentRole::Architect,
+            Some("llama3:8b".into()),
+        );
+
+        let trainer = team.get_by_role(&AgentRole::Trainer);
+        assert!(trainer.is_some());
+        assert_eq!(trainer.unwrap().agent.name, "trainer");
+
+        let compressor = team.get_by_role(&AgentRole::Compressor);
+        assert!(compressor.is_some());
+        assert_eq!(compressor.unwrap().agent.name, "compressor");
+
+        let architect = team.get_by_role(&AgentRole::Architect);
+        assert!(architect.is_some());
+        assert_eq!(architect.unwrap().model, Some("llama3:8b".into()));
+
+        // Role not in team returns None
+        let deployer = team.get_by_role(&AgentRole::Deployer);
+        assert!(deployer.is_none());
+    }
+
+    #[test]
+    fn agent_coordination_serde_roundtrip() {
+        let mut team = Team::new("serde-team", "roundtrip test");
+        team.add_member(trainer_agent(), AgentRole::Trainer, Some("phi3:mini".into()));
+        team.status = AgentStatus::Working {
+            progress: 0.5,
+            description: "half done".into(),
+        };
+
+        let json = serde_json::to_string(&team).unwrap();
+        let deserialized: Team = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.name, "serde-team");
+        assert_eq!(deserialized.task, "roundtrip test");
+        assert_eq!(deserialized.agents.len(), 1);
+        assert_eq!(deserialized.agents[0].role, AgentRole::Trainer);
+        assert_eq!(deserialized.agents[0].model, Some("phi3:mini".into()));
+        if let AgentStatus::Working { progress, description } = &deserialized.status {
+            assert!((progress - 0.5).abs() < f32::EPSILON);
+            assert_eq!(description, "half done");
+        } else {
+            panic!("expected Working status after roundtrip");
+        }
+
+        // Also roundtrip individual types
+        let role_json = serde_json::to_string(&AgentRole::Coordinator).unwrap();
+        let role_back: AgentRole = serde_json::from_str(&role_json).unwrap();
+        assert_eq!(role_back, AgentRole::Coordinator);
+
+        let status = AgentStatus::Error { message: "test error".into() };
+        let status_json = serde_json::to_string(&status).unwrap();
+        let status_back: AgentStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(status_back, AgentStatus::Error { message: "test error".into() });
     }
 }
