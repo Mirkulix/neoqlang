@@ -51,3 +51,9 @@ nul
 
 # Claude worktrees
 .claude/worktrees/
+
+# Git worktrees
+.worktrees/
+
+# Superpowers
+.superpowers/
