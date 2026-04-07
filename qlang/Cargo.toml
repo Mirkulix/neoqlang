@@ -19,6 +19,7 @@ members = [
     "qo/qo-values",
     "qo/qo-agents",
     "qo/qo-evolution",
+    "qo/qo-simulation",
 ]
 resolver = "2"
 
@@ -54,6 +55,10 @@ serde_json = { workspace = true }
 inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
 tokio = { version = "1.51.0", features = ["full"] }
 qo-server = { path = "qo/qo-server" }
+qo-memory = { path = "qo/qo-memory" }
+qo-agents = { path = "qo/qo-agents" }
+qo-consciousness = { path = "qo/qo-consciousness" }
+qo-evolution = { path = "qo/qo-evolution" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 axum = { workspace = true }
