@@ -130,6 +130,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(4646),
         groq_api_key: std::env::var("GROQ_API_KEY").ok(),
         cloud_config,
+        ollama_url: std::env::var("OLLAMA_URL")
+            .ok()
+            .or_else(|| Some("http://localhost:11434".to_string())),
+        ollama_model: std::env::var("OLLAMA_MODEL")
+            .ok()
+            .or_else(|| Some("orbit-companion-ft-q4".to_string())),
         data_dir: PathBuf::from("data"),
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir,

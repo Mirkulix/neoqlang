@@ -35,6 +35,10 @@ pub struct QoConfig {
     pub groq_api_key: Option<String>,
     /// (api_key, base_url, model) for a custom cloud LLM
     pub cloud_config: Option<(String, String, String)>,
+    /// Ollama base URL for Tier 1 local inference (e.g. "http://localhost:11434")
+    pub ollama_url: Option<String>,
+    /// Ollama model name (e.g. "orbit-companion-ft-q4")
+    pub ollama_model: Option<String>,
     pub data_dir: std::path::PathBuf,
     pub obsidian_vault: std::path::PathBuf,
     pub static_dir: Option<std::path::PathBuf>,
@@ -48,6 +52,8 @@ impl Default for QoConfig {
             port: 3000,
             groq_api_key: None,
             cloud_config: None,
+            ollama_url: None,
+            ollama_model: None,
             data_dir: std::path::PathBuf::from("data"),
             obsidian_vault: std::path::PathBuf::from("vault"),
             static_dir: None,
@@ -65,7 +71,11 @@ pub fn build_app(
 
     let store = Store::open(&db_path)?;
     let graph_store = GraphStore::new(store.db())?;
-    let llm = Arc::new(LlmRouter::new(config.groq_api_key, config.cloud_config));
+    let ollama_config = match (config.ollama_url, config.ollama_model) {
+        (Some(url), Some(model)) => Some((url, model)),
+        _ => None,
+    };
+    let llm = Arc::new(LlmRouter::new(config.groq_api_key, config.cloud_config, ollama_config));
     let obsidian = ObsidianBridge::new(config.obsidian_vault);
     let stream = ConsciousnessStream::new(64);
     let consciousness = Mutex::new(ConsciousnessState::default());

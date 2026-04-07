@@ -1,6 +1,7 @@
 use crate::{
     cloud::{CloudClient, CloudMessage},
     groq::{GroqClient, GroqMessage},
+    ollama::OllamaClient,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -40,6 +41,7 @@ pub struct CostTracker {
 pub struct LlmRouter {
     groq: Option<GroqClient>,
     cloud: Option<CloudClient>,
+    ollama: Option<OllamaClient>, // Tier 1 local inference
     cloud_model: Option<String>,
     cost_tracker: Arc<CostTracker>,
 }
@@ -48,12 +50,14 @@ impl LlmRouter {
     pub fn new(
         groq_api_key: Option<String>,
         cloud_config: Option<(String, String, String)>,
+        ollama_config: Option<(String, String)>, // (base_url, model)
     ) -> Self {
         let cloud_model = cloud_config.as_ref().map(|(_, _, model)| model.clone());
         Self {
             groq: groq_api_key.map(GroqClient::new),
             cloud: cloud_config
                 .map(|(api_key, base_url, model)| CloudClient::new(api_key, base_url, model)),
+            ollama: ollama_config.map(|(url, model)| OllamaClient::new(url, model)),
             cloud_model,
             cost_tracker: Arc::new(CostTracker::default()),
         }
@@ -111,16 +115,29 @@ impl LlmRouter {
             status: cloud_status,
         });
 
-        // Local IGQK
+        // Local — Ollama or IGQK future
         let local_requests = self.cost_tracker.local_requests.load(Ordering::Relaxed);
+        let (local_name, local_model, local_status) = if let Some(ref ollama) = self.ollama {
+            (
+                "Ollama (local)".to_string(),
+                ollama.model.clone(),
+                "active".to_string(),
+            )
+        } else {
+            (
+                "QO-LLM (IGQK)".to_string(),
+                "qwen2.5-0.5b-ternary".to_string(),
+                "coming_soon".to_string(),
+            )
+        };
         stats.push(ProviderStats {
-            name: "QO-LLM (IGQK)".to_string(),
-            model: "qwen2.5-0.5b-ternary".to_string(),
+            name: local_name,
+            model: local_model,
             requests: local_requests,
             total_tokens_estimate: 0,
             cost_usd: 0.0,
             avg_latency_ms: 0,
-            status: "coming_soon".to_string(),
+            status: local_status,
         });
 
         stats
@@ -204,8 +221,22 @@ impl LlmRouter {
                 // fall through to Groq
                 self.groq_chat(messages).await
             }
-            Tier::Groq | Tier::Local => {
-                // Phase 1: Local falls back to Groq
+            Tier::Local => {
+                if let Some(ref ollama) = self.ollama {
+                    match ollama.chat(messages.clone()).await {
+                        Ok(response) => {
+                            self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
+                            return Ok(response);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Ollama failed, falling back to Groq: {e}");
+                        }
+                    }
+                }
+                // Fallback to Groq when Ollama is absent or failed
+                self.groq_chat(messages).await
+            }
+            Tier::Groq => {
                 self.groq_chat(messages).await
             }
         }
@@ -282,7 +313,7 @@ mod tests {
     use super::*;
 
     fn router() -> LlmRouter {
-        LlmRouter::new(None, None)
+        LlmRouter::new(None, None, None)
     }
 
     #[test]
@@ -323,7 +354,23 @@ mod tests {
         assert_eq!(stats.len(), 3);
         assert_eq!(stats[0].name, "Groq");
         assert_eq!(stats[1].name, "Cloud");
+        // Without Ollama configured, falls back to IGQK placeholder
         assert_eq!(stats[2].name, "QO-LLM (IGQK)");
+    }
+
+    #[test]
+    fn tier_local_with_ollama_configured() {
+        let router = LlmRouter::new(
+            None,
+            None,
+            Some(("http://localhost:11434".into(), "orbit-companion-ft-q4".into())),
+        );
+        assert!(router.ollama.is_some());
+        // provider_stats should show Ollama as active
+        let stats = router.provider_stats();
+        assert_eq!(stats[2].name, "Ollama (local)");
+        assert_eq!(stats[2].model, "orbit-companion-ft-q4");
+        assert_eq!(stats[2].status, "active");
     }
 
     #[test]
