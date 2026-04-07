@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Dna, Play, Check, X, AlertTriangle, TrendingUp } from 'lucide-react'
+import { Dna, Play, Check, X, AlertTriangle, TrendingUp, FlaskConical } from 'lucide-react'
 
 interface EvolutionState {
   strategy_weights?: Record<string, number>
   generation?: number
   fitness_score?: number
+  entropy?: number
 }
 
 interface Pattern {
@@ -64,7 +65,7 @@ export default function EvolutionView() {
 
   useEffect(() => {
     fetchAll()
-    const interval = setInterval(fetchAll, 5000)
+    const interval = setInterval(fetchAll, 10000)
     return () => clearInterval(interval)
   }, [])
 
@@ -105,6 +106,7 @@ export default function EvolutionView() {
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                 Generation {evoState.generation}
                 {evoState.fitness_score != null && ` \u00b7 Fitness: ${(evoState.fitness_score * 100).toFixed(1)}%`}
+                {evoState.entropy != null && ` \u00b7 Entropie: ${evoState.entropy.toFixed(4)}`}
               </div>
             )}
           </div>
@@ -123,7 +125,7 @@ export default function EvolutionView() {
         <div style={{ marginBottom: '16px', fontSize: '12px', color: 'var(--accent-danger)' }}>{error}</div>
       )}
 
-      {!hasData ? (
+      {!hasData && (
         <div className="empty-state">
           <Dna size={40} className="empty-icon" />
           <div className="empty-title">Evolution -- Phase 4</div>
@@ -131,7 +133,9 @@ export default function EvolutionView() {
             Starte eine Analyse, um Muster zu erkennen und Verbesserungsvorschl&auml;ge zu generieren.
           </div>
         </div>
-      ) : (
+      )}
+
+      {hasData && (
         <>
           {/* Strategy weights */}
           {evoState?.strategy_weights && Object.keys(evoState.strategy_weights).length > 0 && (
@@ -238,6 +242,18 @@ export default function EvolutionView() {
         </>
       )}
 
+      {/* Simulation Placeholder */}
+      <div className="card-static evo-simulation-section">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+          <FlaskConical size={18} style={{ color: 'var(--accent-info)' }} />
+          <h3 className="heading" style={{ fontSize: '13px', margin: 0 }}>Szenario-Simulation</h3>
+          <span className="badge badge-info" style={{ marginLeft: 'auto' }}>Verf&uuml;gbar ab n&auml;chster Version</span>
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0 }}>
+          Vor der Ausf&uuml;hrung eines Ziels simuliert QO verschiedene Strategien und w&auml;hlt die beste.
+        </p>
+      </div>
+
       <style>{`
         .evo-icon-wrapper {
           width: 44px;
@@ -262,6 +278,12 @@ export default function EvolutionView() {
           border: 1px solid var(--border);
           display: flex;
           flex-direction: column;
+        }
+        .evo-simulation-section {
+          margin-top: 16px;
+          border-color: var(--accent-info);
+          border-left: 3px solid var(--accent-info);
+          opacity: 0.8;
         }
       `}</style>
     </div>
