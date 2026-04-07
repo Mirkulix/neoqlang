@@ -64,43 +64,28 @@ pub fn build_app(
     let stream = ConsciousnessStream::new(64);
     let consciousness = Mutex::new(ConsciousnessState::default());
 
-    let agents = Mutex::new(AgentRegistry::new());
-    let patterns = Mutex::new(PatternDetector::new());
-    let proposals = Mutex::new(ProposalEngine::new());
-    let quantum = Mutex::new(QuantumState::new(vec![
+    // Load persisted data BEFORE creating AppState (no async runtime yet)
+    let mut agents_reg = AgentRegistry::new();
+    let mut pattern_det = PatternDetector::new();
+    let mut proposal_eng = ProposalEngine::new();
+    let mut quantum_st = QuantumState::new(vec![
         "Direkte Ausführung".into(),
         "Dekomposition + Delegation".into(),
         "Recherche zuerst".into(),
         "Kreative Lösung".into(),
-    ]));
+    ]);
 
-    let state = Arc::new(AppState {
-        llm,
-        store,
-        graph_store,
-        consciousness,
-        stream,
-        obsidian,
-        agents,
-        patterns,
-        proposals,
-        quantum,
-    });
-
-    // Load persisted goals
-    if let Ok(goals) = state.store.list_goals() {
-        let mut reg = state.agents.blocking_lock();
+    // Restore goals
+    if let Ok(goals) = store.list_goals() {
         for (_, json) in goals {
-            match serde_json::from_str::<qo_agents::Goal>(&json) {
-                Ok(goal) => reg.restore_goal(goal),
-                Err(e) => tracing::warn!("failed to deserialize persisted goal: {e}"),
+            if let Ok(goal) = serde_json::from_str::<qo_agents::Goal>(&json) {
+                agents_reg.restore_goal(goal);
             }
         }
     }
 
-    // Load persisted agent stats
-    if let Ok(agent_stats) = state.store.load_agent_stats() {
-        let mut reg = state.agents.blocking_lock();
+    // Restore agent stats
+    if let Ok(agent_stats) = store.load_agent_stats() {
         for (role_str, json) in agent_stats {
             let role = match role_str.as_str() {
                 "Ceo" => Some(AgentRole::Ceo),
@@ -113,47 +98,58 @@ pub fn build_app(
             };
             if let Some(role) = role {
                 #[derive(serde::Deserialize)]
-                struct AgentStats { tasks_completed: u32, tasks_failed: u32 }
-                match serde_json::from_str::<AgentStats>(&json) {
-                    Ok(stats) => reg.restore_agent_stats(role, stats.tasks_completed, stats.tasks_failed),
-                    Err(e) => tracing::warn!("failed to deserialize agent stats for {role_str}: {e}"),
+                struct Stats { tasks_completed: u32, tasks_failed: u32 }
+                if let Ok(stats) = serde_json::from_str::<Stats>(&json) {
+                    agents_reg.restore_agent_stats(role, stats.tasks_completed, stats.tasks_failed);
                 }
             }
         }
     }
 
-    // Load persisted patterns
-    if let Ok(patterns_data) = state.store.list_patterns() {
-        let mut det = state.patterns.blocking_lock();
-        for (_, json) in patterns_data {
-            match serde_json::from_str::<Pattern>(&json) {
-                Ok(pattern) => det.restore_pattern(pattern),
-                Err(e) => tracing::warn!("failed to deserialize persisted pattern: {e}"),
+    // Restore patterns
+    if let Ok(data) = store.list_patterns() {
+        for (_, json) in data {
+            if let Ok(p) = serde_json::from_str::<Pattern>(&json) {
+                pattern_det.restore_pattern(p);
             }
         }
     }
 
-    // Load persisted proposals
-    if let Ok(proposals_data) = state.store.list_proposals() {
-        let mut eng = state.proposals.blocking_lock();
-        for (_, json) in proposals_data {
-            match serde_json::from_str::<Proposal>(&json) {
-                Ok(proposal) => eng.restore_proposal(proposal),
-                Err(e) => tracing::warn!("failed to deserialize persisted proposal: {e}"),
+    // Restore proposals
+    if let Ok(data) = store.list_proposals() {
+        for (_, json) in data {
+            if let Ok(p) = serde_json::from_str::<Proposal>(&json) {
+                proposal_eng.restore_proposal(p);
             }
         }
     }
 
-    // Load persisted quantum state
-    if let Ok(Some(json)) = state.store.load_quantum_state() {
-        match serde_json::from_str::<QuantumState>(&json) {
-            Ok(qs) => {
-                let mut quantum = state.quantum.blocking_lock();
-                *quantum = qs;
-            }
-            Err(e) => tracing::warn!("failed to deserialize persisted quantum state: {e}"),
+    // Restore quantum state
+    if let Ok(Some(json)) = store.load_quantum_state() {
+        if let Ok(qs) = serde_json::from_str::<QuantumState>(&json) {
+            quantum_st = qs;
         }
     }
+
+    tracing::info!("Restored: {} goals, {} patterns, {} proposals, gen {}",
+        agents_reg.list_goals().len(),
+        pattern_det.all_patterns().len(),
+        proposal_eng.all().len(),
+        quantum_st.generation,
+    );
+
+    let state = Arc::new(AppState {
+        llm,
+        store,
+        graph_store,
+        consciousness,
+        stream,
+        obsidian,
+        agents: Mutex::new(agents_reg),
+        patterns: Mutex::new(pattern_det),
+        proposals: Mutex::new(proposal_eng),
+        quantum: Mutex::new(quantum_st),
+    });
 
     let api_router = Router::new()
         .route("/api/health", get(routes::health::health))
