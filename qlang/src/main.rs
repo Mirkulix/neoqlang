@@ -170,15 +170,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Start heartbeat tick
-    let cs_state = state.clone();
+    // Idle detection — check every 5 minutes, regen energy if idle
+    let idle_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
         loop {
             interval.tick().await;
-            let mut cs = cs_state.consciousness.lock().await;
-            cs.tick();
-            cs_state.stream.publish(cs.clone());
+            let mut cs = idle_state.consciousness.lock().await;
+            // Regen energy when idle
+            let agents = idle_state.agents.lock().await;
+            if agents.active_count() == 0 {
+                cs.energy = (cs.energy + 5.0).min(100.0);
+            }
+            cs.process_event(&qo_consciousness::StateEvent::Idle);
+            idle_state.stream.publish(cs.clone());
+            drop(agents);
+            drop(cs);
         }
     });
 
