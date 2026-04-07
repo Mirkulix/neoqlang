@@ -184,4 +184,33 @@ mod tests {
         let patterns = detector.analyze(&stats);
         assert!(patterns.iter().any(|p| p.name == "completion_streak"));
     }
+
+    #[test]
+    fn test_upsert_increments_frequency() {
+        let mut detector = PatternDetector::new();
+        let stats = SystemStats {
+            total_tasks: 10, tasks_completed: 3, tasks_failed: 7,
+            agents_active: 1, agents_idle: 5, avg_energy: 50.0, completed_streak: 0,
+        };
+        detector.analyze(&stats);
+        detector.analyze(&stats);
+        // high_failure_rate pattern should have frequency 2 after two detections
+        let pattern = detector.all_patterns().iter().find(|p| p.name == "high_failure_rate");
+        assert!(pattern.is_some());
+        assert_eq!(pattern.unwrap().frequency, 2);
+    }
+
+    #[test]
+    fn test_no_patterns_when_stats_are_good() {
+        let mut detector = PatternDetector::new();
+        let stats = SystemStats {
+            // Low failure (below 50%), balanced agents (idle_ratio ~0.5), high energy
+            total_tasks: 4, tasks_completed: 4, tasks_failed: 0,
+            agents_active: 3, agents_idle: 3, avg_energy: 80.0, completed_streak: 0,
+        };
+        let patterns = detector.analyze(&stats);
+        // Should not detect high_failure_rate (need >5 tasks) or agent_idle_dominance (ratio 0.5)
+        assert!(!patterns.iter().any(|p| p.name == "high_failure_rate"));
+        assert!(!patterns.iter().any(|p| p.name == "agent_idle_dominance"));
+    }
 }

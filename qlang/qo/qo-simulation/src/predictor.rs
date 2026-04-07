@@ -121,4 +121,21 @@ mod tests {
         assert_eq!(pred.strategy_scores.len(), 2);
         assert!(!pred.recommended_name.is_empty());
     }
+
+    #[test]
+    fn test_empty_results() {
+        // Scenario with a strategy but zero simulations run
+        let mut s = Scenario::new(3, "Empty test".into());
+        s.add_strategy(Strategy {
+            name: "NoRun".into(), agents_involved: vec!["R".into()],
+            steps: vec!["do".into()], estimated_cost: 0.0, estimated_duration_ms: 100,
+        });
+        // Pass empty results (num_simulations=0)
+        let results: Vec<Vec<SimulationResult>> = vec![vec![]];
+        let pred = predict(&s, &results);
+        // predict skips strategies with n=0, so strategy_scores may be empty
+        assert_eq!(pred.scenario_id, 3);
+        // recommended_strategy defaults to 0, confidence defaults to 0.0
+        assert_eq!(pred.confidence, 0.0);
+    }
 }

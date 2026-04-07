@@ -292,6 +292,33 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn test_chat_history_limit() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("chat_limit_test.redb");
+        let store = Store::open(&db_path).unwrap();
+
+        for i in 1u64..=10 {
+            store.store_chat(i, &format!(r#"{{"id":{}}}"#, i)).unwrap();
+        }
+
+        let history = store.chat_history(3).unwrap();
+        assert_eq!(history.len(), 3);
+    }
+
+    #[test]
+    fn test_overwrite_kv() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("overwrite_test.redb");
+        let store = Store::open(&db_path).unwrap();
+
+        store.set("key1", "first_value").unwrap();
+        store.set("key1", "second_value").unwrap();
+
+        let val = store.get("key1").unwrap();
+        assert_eq!(val, Some("second_value".to_string()));
+    }
+
+    #[test]
     fn store_and_retrieve_chat() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.redb");

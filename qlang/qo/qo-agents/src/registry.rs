@@ -248,3 +248,31 @@ impl Default for AgentRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_has_6_agents() {
+        let registry = AgentRegistry::new();
+        let agents = registry.list_agents();
+        assert_eq!(agents.len(), 6);
+        // Verify all roles are present
+        for role in AgentRole::ALL {
+            assert!(registry.get_agent(role).is_some(), "Missing role: {:?}", role);
+        }
+    }
+
+    #[test]
+    fn test_create_goal_increments_id() {
+        let mut registry = AgentRegistry::new();
+        let g1 = registry.create_goal("First goal".to_string());
+        let id1 = g1.id;
+        let g2 = registry.create_goal("Second goal".to_string());
+        let id2 = g2.id;
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(registry.list_goals().len(), 2);
+    }
+}

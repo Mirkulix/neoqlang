@@ -122,3 +122,69 @@ impl Default for ProposalEngine {
 fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_pattern(name: &str, category: PatternCategory) -> Pattern {
+        Pattern {
+            id: 1,
+            name: name.to_string(),
+            description: format!("Test pattern {}", name),
+            frequency: 1,
+            severity: 0.8,
+            first_seen: 0,
+            last_seen: 0,
+            category,
+        }
+    }
+
+    #[test]
+    fn test_approve_changes_status() {
+        let mut engine = ProposalEngine::new();
+        let pattern = make_pattern("high_failure_rate", PatternCategory::Error);
+        let patterns = vec![&pattern];
+        let generated = engine.generate_from_patterns(&patterns);
+        assert_eq!(generated.len(), 1);
+        let id = generated[0].id;
+
+        let ok = engine.approve(id);
+        assert!(ok);
+        let proposal = engine.all().iter().find(|p| p.id == id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Approved);
+    }
+
+    #[test]
+    fn test_no_duplicate_pending() {
+        let mut engine = ProposalEngine::new();
+        let pattern = make_pattern("stagnation", PatternCategory::Stagnation);
+        let patterns = vec![&pattern];
+
+        let first = engine.generate_from_patterns(&patterns);
+        assert_eq!(first.len(), 1);
+
+        // Second call with same pattern → no new pending proposal
+        let second = engine.generate_from_patterns(&patterns);
+        assert_eq!(second.len(), 0);
+
+        // Only one proposal total
+        assert_eq!(engine.pending().len(), 1);
+    }
+
+    #[test]
+    fn test_reject_proposal() {
+        let mut engine = ProposalEngine::new();
+        let pattern = make_pattern("low_energy", PatternCategory::Performance);
+        let patterns = vec![&pattern];
+        let generated = engine.generate_from_patterns(&patterns);
+        let id = generated[0].id;
+
+        let ok = engine.reject(id);
+        assert!(ok);
+        let proposal = engine.all().iter().find(|p| p.id == id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Rejected);
+        // No longer in pending
+        assert!(engine.pending().is_empty());
+    }
+}

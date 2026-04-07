@@ -331,4 +331,28 @@ mod tests {
         assert_eq!(tasks[0].assigned_to, AgentRole::Researcher);
         assert_eq!(tasks[1].assigned_to, AgentRole::Artisan);
     }
+
+    #[test]
+    fn test_parse_empty_response() {
+        let tasks = parse_subtasks("");
+        assert_eq!(tasks.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_mixed_formats() {
+        let input = "1. [Researcher] Analysiere den Markt\n- Developer: Baue den Prototyp";
+        let tasks = parse_subtasks(input);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].assigned_to, AgentRole::Researcher);
+        assert_eq!(tasks[1].assigned_to, AgentRole::Developer);
+    }
+
+    #[test]
+    fn test_parse_numbered_without_brackets() {
+        let input = "1. Researcher: do X\n2. Strategist: do Y";
+        let tasks = parse_subtasks(input);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].assigned_to, AgentRole::Researcher);
+        assert_eq!(tasks[1].assigned_to, AgentRole::Strategist);
+    }
 }

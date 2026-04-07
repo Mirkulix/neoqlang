@@ -355,6 +355,48 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_prompt_routes_to_local() {
+        let r = router();
+        let complexity = r.score_complexity("");
+        let tier = r.select_tier(complexity);
+        assert_eq!(tier, Tier::Local);
+    }
+
+    #[test]
+    fn test_very_long_prompt_routes_to_cloud() {
+        let r = router();
+        // 2000 chars + complexity keywords → score > 0.7
+        let prompt = format!("{} architecture design optimize refactor security algorithm implement analyze complex system", "a".repeat(2000));
+        let complexity = r.score_complexity(&prompt);
+        let tier = r.select_tier(complexity);
+        assert_eq!(tier, Tier::Cloud);
+    }
+
+    #[test]
+    fn test_score_complexity_range() {
+        let r = router();
+        let long = "a".repeat(5000);
+        let prompts: &[&str] = &["", "hi", long.as_str(), "architecture design security system"];
+        for prompt in prompts {
+            let score = r.score_complexity(prompt);
+            assert!(score >= 0.0 && score <= 1.0, "score {} out of range for prompt len {}", score, prompt.len());
+        }
+    }
+
+    #[test]
+    fn test_tier_boundaries() {
+        let r = router();
+        // Exactly at 0.3 boundary → Groq
+        assert_eq!(r.select_tier(0.3), Tier::Groq);
+        // Just below 0.3 → Local
+        assert_eq!(r.select_tier(0.29), Tier::Local);
+        // Exactly at 0.7 boundary → Cloud
+        assert_eq!(r.select_tier(0.7), Tier::Cloud);
+        // Just below 0.7 → Groq
+        assert_eq!(r.select_tier(0.69), Tier::Groq);
+    }
+
+    #[test]
     fn test_provider_selection_prefers_lower_tier() {
         // Simulate priority sorting: enabled providers sorted by tier ascending.
         #[derive(Debug, PartialEq)]

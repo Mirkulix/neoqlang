@@ -106,4 +106,33 @@ mod tests {
         let avg = scores.average();
         assert!((avg - 0.5).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn test_all_values_constant() {
+        assert_eq!(Value::ALL.len(), 5);
+    }
+
+    #[test]
+    fn test_value_names() {
+        let mut scores = ValueScores::default();
+        scores.set(Value::Achtsamkeit, 0.1);
+        scores.set(Value::Anerkennung, 0.2);
+        scores.set(Value::Aufmerksamkeit, 0.3);
+        scores.set(Value::Entwicklung, 0.4);
+        scores.set(Value::Sinn, 0.6);
+        assert!((scores.get(Value::Achtsamkeit) - 0.1).abs() < f32::EPSILON);
+        assert!((scores.get(Value::Anerkennung) - 0.2).abs() < f32::EPSILON);
+        assert!((scores.get(Value::Aufmerksamkeit) - 0.3).abs() < f32::EPSILON);
+        assert!((scores.get(Value::Entwicklung) - 0.4).abs() < f32::EPSILON);
+        assert!((scores.get(Value::Sinn) - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_average_all_ones() {
+        let mut scores = ValueScores::default();
+        for value in Value::ALL {
+            scores.set(value, 1.0);
+        }
+        assert!((scores.average() - 1.0).abs() < f32::EPSILON);
+    }
 }

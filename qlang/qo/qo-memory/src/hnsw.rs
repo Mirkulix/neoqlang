@@ -87,4 +87,19 @@ mod tests {
         let results = store.search(&[1.0, 0.0, 0.0], 5);
         assert!(results.is_empty());
     }
+
+    #[test]
+    fn test_cosine_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let dist = cosine_distance(&v, &v);
+        assert!(dist.abs() < 1e-6, "identical vectors should have distance ~0, got {}", dist);
+    }
+
+    #[test]
+    fn test_cosine_orthogonal_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let dist = cosine_distance(&a, &b);
+        assert!((dist - 1.0).abs() < 1e-6, "orthogonal vectors should have distance ~1, got {}", dist);
+    }
 }

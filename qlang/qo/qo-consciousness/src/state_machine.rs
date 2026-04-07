@@ -223,4 +223,62 @@ mod tests {
         state.process_event(&StateEvent::Idle);
         assert_eq!(state.mood, Mood::Creating);
     }
+
+    #[test]
+    fn test_tick_regens_only_when_idle() {
+        let mut state = ConsciousnessState::default();
+        state.energy = 50.0;
+        state.agents_active = 2;
+        state.tick();
+        // Energy should NOT regen when agents_active > 0
+        assert_eq!(state.energy, 50.0);
+        assert_eq!(state.heartbeat, 1);
+    }
+
+    #[test]
+    fn test_energy_never_exceeds_100() {
+        let mut state = ConsciousnessState::default();
+        state.energy = 99.9;
+        state.agents_active = 0;
+        state.tick();
+        assert!(state.energy <= 100.0);
+    }
+
+    #[test]
+    fn test_mood_lifecycle() {
+        let mut state = ConsciousnessState::default();
+        // Start in Learning
+        assert_eq!(state.mood, Mood::Learning);
+        // ChatReceived → Focused
+        state.process_event(&StateEvent::ChatReceived);
+        assert_eq!(state.mood, Mood::Focused);
+        // TaskCompleted → Creating
+        state.process_event(&StateEvent::TaskCompleted { agent: "dev".to_string() });
+        assert_eq!(state.mood, Mood::Creating);
+        // GoalCompleted → Reflecting
+        state.process_event(&StateEvent::GoalCompleted { description: "done".to_string() });
+        assert_eq!(state.mood, Mood::Reflecting);
+        // GoalFailed → Restless
+        state.process_event(&StateEvent::GoalFailed { description: "oops".to_string() });
+        assert_eq!(state.mood, Mood::Restless);
+    }
+
+    #[test]
+    fn test_tasks_counter_increments() {
+        let mut state = ConsciousnessState::default();
+        assert_eq!(state.tasks_completed, 0);
+        state.task_completed();
+        state.task_completed();
+        state.task_completed();
+        assert_eq!(state.tasks_completed, 3);
+    }
+
+    #[test]
+    fn test_process_idle_high_energy() {
+        let mut state = ConsciousnessState::default();
+        state.energy = 90.0;
+        state.mood = Mood::Focused;
+        state.process_event(&StateEvent::Idle);
+        assert_eq!(state.mood, Mood::Learning);
+    }
 }

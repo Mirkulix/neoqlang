@@ -18,6 +18,11 @@ impl Simulator {
         }
     }
 
+    /// Create a simulator with a fixed seed for reproducible tests.
+    pub fn with_seed(num_simulations: u32, seed: u64) -> Self {
+        Self { num_simulations, seed }
+    }
+
     /// Simulate all strategies for a scenario
     pub fn simulate(&mut self, scenario: &Scenario) -> Vec<Vec<SimulationResult>> {
         let mut all_results = Vec::new();
@@ -153,5 +158,32 @@ mod tests {
                 assert!(r.value_alignment >= 0.0 && r.value_alignment <= 1.0);
             }
         }
+    }
+
+    #[test]
+    fn test_reproducible_with_same_seed() {
+        let scenario = test_scenario();
+        let mut sim1 = Simulator::with_seed(10, 42);
+        let mut sim2 = Simulator::with_seed(10, 42);
+        let results1 = sim1.simulate(&scenario);
+        let results2 = sim2.simulate(&scenario);
+        // Both should produce identical scores
+        for (sr1, sr2) in results1.iter().zip(results2.iter()) {
+            for (r1, r2) in sr1.iter().zip(sr2.iter()) {
+                assert_eq!(r1.score, r2.score);
+                assert_eq!(r1.success, r2.success);
+            }
+        }
+    }
+
+    #[test]
+    fn test_zero_simulations() {
+        let scenario = test_scenario();
+        let mut sim = Simulator::new(0);
+        let results = sim.simulate(&scenario);
+        // Two strategies, but zero runs each
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_empty());
+        assert!(results[1].is_empty());
     }
 }
