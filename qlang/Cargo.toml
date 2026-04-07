@@ -17,6 +17,7 @@ members = [
     "qo/qo-memory",
     "qo/qo-consciousness",
     "qo/qo-values",
+    "qo/qo-agents",
 ]
 resolver = "2"
 
