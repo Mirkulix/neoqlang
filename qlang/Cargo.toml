@@ -12,6 +12,11 @@ members = [
     "crates/qlang-agent",
     "crates/qlang-python",
     "crates/qlang-sdk",
+    "qo/qo-server",
+    "qo/qo-llm",
+    "qo/qo-memory",
+    "qo/qo-consciousness",
+    "qo/qo-values",
 ]
 resolver = "2"
 
@@ -29,6 +34,12 @@ qlang-agent = { path = "crates/qlang-agent" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+reqwest = { version = "0.12", features = ["json"] }
+redb = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [dependencies]
 qlang-core = { workspace = true }
