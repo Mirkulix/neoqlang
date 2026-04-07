@@ -86,8 +86,12 @@ export default function ConsciousnessView() {
 
     es.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data) as ConsciousnessState
-        applyState(data)
+        const data = JSON.parse(event.data)
+        // BroadcastEvent is now tagged with "type"
+        if (data.type === 'state') {
+          applyState(data.state as ConsciousnessState)
+        }
+        // "activity" events are ignored here — handled by ActivityFeed
       } catch {}
     }
 

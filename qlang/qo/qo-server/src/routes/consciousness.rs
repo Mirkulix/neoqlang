@@ -18,9 +18,11 @@ pub async fn stream(
     let broadcast_stream = BroadcastStream::new(rx);
 
     // Filter out lagged errors, map to SSE events
+    // BroadcastEvent is tagged with "type" so the frontend can distinguish
+    // "state" events from "activity" events
     let sse_stream = broadcast_stream.filter_map(|result| match result {
         Ok(event) => {
-            let data = serde_json::to_string(&event.state).unwrap_or_default();
+            let data = serde_json::to_string(&event).unwrap_or_default();
             Some(Ok::<Event, std::convert::Infallible>(
                 Event::default().data(data),
             ))

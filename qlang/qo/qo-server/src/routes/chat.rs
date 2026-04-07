@@ -42,13 +42,17 @@ pub async fn chat(
             goal.id
         };
 
+        state.stream.publish_activity(
+            format!("Chat-Ziel #{} erstellt und wird bearbeitet", goal_id),
+            None,
+            "info",
+        );
+
         // Spawn background execution
         let state_clone = state.clone();
+        let description = req.message.clone();
         tokio::spawn(async move {
-            let mut registry = state_clone.agents.lock().await;
-            if let Err(e) = registry.execute_goal(goal_id, &state_clone.llm).await {
-                tracing::warn!("Goal {} execution failed: {}", goal_id, e);
-            }
+            crate::routes::goals::execute_goal_background(state_clone, goal_id, description).await;
         });
 
         Some(format!(

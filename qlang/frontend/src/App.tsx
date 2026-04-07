@@ -4,6 +4,7 @@ import ConsciousnessView from './ConsciousnessView'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
 import EvolutionView from './EvolutionView'
+import ActivityFeed from './ActivityFeed'
 
 const globalStyles = `
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e0e0e0; }
@@ -22,6 +23,9 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'consciousness', label: 'Bewusstsein' },
   { id: 'evolution', label: 'Evolution' },
 ]
+
+// Height of the bottom activity feed panel (as a percentage of viewport)
+const FEED_HEIGHT_PERCENT = 25
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('chat')
@@ -78,9 +82,28 @@ export default function App() {
         </div>
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      {/* Main content area — takes remaining space minus feed */}
+      <div style={{
+        flex: 1,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        height: `${100 - FEED_HEIGHT_PERCENT}%`,
+        minHeight: 0,
+      }}>
         {renderContent()}
+      </div>
+
+      {/* Activity feed — always visible at bottom */}
+      <div style={{
+        height: `${FEED_HEIGHT_PERCENT}vh`,
+        minHeight: '120px',
+        maxHeight: '300px',
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      }}>
+        <ActivityFeed />
       </div>
     </div>
   )

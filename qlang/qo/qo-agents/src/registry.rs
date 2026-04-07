@@ -121,6 +121,104 @@ impl AgentRegistry {
 
         result
     }
+
+    /// Step 1: CEO decomposes the goal into subtasks. Returns subtask count.
+    pub async fn execute_goal_decompose(
+        &mut self,
+        goal_id: u64,
+        llm: &LlmRouter,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
+            ceo.status = AgentStatus::Active;
+        }
+
+        let goal = self
+            .goals
+            .iter_mut()
+            .find(|g| g.id == goal_id)
+            .ok_or("Goal not found")?;
+
+        executor::decompose_goal(llm, goal).await?;
+        let count = goal.subtasks.len();
+        Ok(count)
+    }
+
+    /// Step 2: Execute a single subtask by index.
+    pub async fn execute_goal_subtask(
+        &mut self,
+        goal_id: u64,
+        subtask_index: usize,
+        llm: &LlmRouter,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Mark the agent for this subtask as active
+        let agent_role = {
+            let goal = self
+                .goals
+                .iter()
+                .find(|g| g.id == goal_id)
+                .ok_or("Goal not found")?;
+            goal.subtasks
+                .get(subtask_index)
+                .ok_or("Subtask not found")?
+                .assigned_to
+        };
+
+        if let Some(agent) = self.agents.get_mut(&agent_role) {
+            agent.status = AgentStatus::Active;
+        }
+
+        let goal = self
+            .goals
+            .iter_mut()
+            .find(|g| g.id == goal_id)
+            .ok_or("Goal not found")?;
+
+        let result = executor::execute_subtask(llm, goal, subtask_index).await;
+
+        if let Some(agent) = self.agents.get_mut(&agent_role) {
+            agent.status = AgentStatus::Idle;
+            match &result {
+                Ok(_) => agent.tasks_completed += 1,
+                Err(_) => agent.tasks_failed += 1,
+            }
+        }
+
+        result
+    }
+
+    /// Step 3: CEO summarizes all subtask results. Returns summary string.
+    pub async fn execute_goal_summarize(
+        &mut self,
+        goal_id: u64,
+        llm: &LlmRouter,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let goal = self
+            .goals
+            .iter_mut()
+            .find(|g| g.id == goal_id)
+            .ok_or("Goal not found")?;
+
+        executor::summarize_goal(llm, goal).await
+    }
+
+    /// Finalize: update CEO stats and mark goal complete.
+    pub fn finalize_goal(&mut self, goal_id: u64) {
+        let succeeded = self
+            .goals
+            .iter()
+            .find(|g| g.id == goal_id)
+            .map(|g| g.result.is_some())
+            .unwrap_or(false);
+
+        if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
+            ceo.status = AgentStatus::Idle;
+            if succeeded {
+                ceo.tasks_completed += 1;
+            } else {
+                ceo.tasks_failed += 1;
+            }
+        }
+    }
 }
 
 impl Default for AgentRegistry {

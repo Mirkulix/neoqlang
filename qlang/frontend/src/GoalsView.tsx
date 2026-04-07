@@ -1,4 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+
+const pulseStyle = `
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.3); }
+  }
+`
 
 interface Subtask {
   description: string
@@ -31,9 +38,12 @@ const statusLabel: Record<string, string> = {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const isInProgress = status === 'InProgress'
   return (
     <span style={{
-      display: 'inline-block',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '5px',
       padding: '2px 10px',
       borderRadius: '10px',
       fontSize: '11px',
@@ -42,6 +52,16 @@ function StatusBadge({ status }: { status: string }) {
       color: statusColor[status] ?? '#8b949e',
       border: `1px solid ${statusColor[status] ?? '#8b949e'}44`,
     }}>
+      {isInProgress && (
+        <span style={{
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          background: statusColor['InProgress'],
+          display: 'inline-block',
+          animation: 'pulse 1.2s ease-in-out infinite',
+        }} />
+      )}
       {statusLabel[status] ?? status}
     </span>
   )
@@ -137,6 +157,17 @@ export default function GoalsView() {
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const styleRef = useRef<HTMLStyleElement | null>(null)
+
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = pulseStyle
+    document.head.appendChild(style)
+    styleRef.current = style
+    return () => {
+      if (styleRef.current) document.head.removeChild(styleRef.current)
+    }
+  }, [])
 
   const fetchGoals = () => {
     fetch('/api/goals')
@@ -147,7 +178,7 @@ export default function GoalsView() {
 
   useEffect(() => {
     fetchGoals()
-    const interval = setInterval(fetchGoals, 3000)
+    const interval = setInterval(fetchGoals, 2000)
     return () => clearInterval(interval)
   }, [])
 

@@ -12,7 +12,25 @@ pub async fn execute_goal(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
 
-    // Step 1: CEO decomposes the goal into subtasks
+    decompose_goal(llm, goal).await?;
+
+    let subtask_count = goal.subtasks.len();
+    for i in 0..subtask_count {
+        let _ = execute_subtask(llm, goal, i).await;
+    }
+
+    summarize_goal(llm, goal).await?;
+
+    Ok(())
+}
+
+/// Step 1: CEO decomposes the goal into subtasks (populates goal.subtasks).
+pub async fn decompose_goal(
+    llm: &LlmRouter,
+    goal: &mut Goal,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    goal.status = GoalStatus::InProgress;
+
     let decomposition_prompt = format!(
         "Zerlege dieses Ziel in 2-4 konkrete Teilaufgaben. Für jede Aufgabe, bestimme welcher Agent sie bearbeiten soll.\n\
         Verfügbare Agenten: Researcher (Analyse/Recherche), Developer (Code/Technik), Strategist (Planung), Artisan (Kreativ).\n\n\
@@ -32,11 +50,9 @@ pub async fn execute_goal(
     )
     .await?;
 
-    // Parse subtasks from LLM response
     goal.subtasks = parse_subtasks(&decomposition);
 
     if goal.subtasks.is_empty() {
-        // Fallback: single task assigned to Researcher
         goal.subtasks.push(SubTask {
             description: goal.description.clone(),
             assigned_to: AgentRole::Researcher,
@@ -45,31 +61,52 @@ pub async fn execute_goal(
         });
     }
 
-    // Step 2: Execute each subtask
-    let mut all_results = Vec::new();
-    for subtask in &mut goal.subtasks {
-        subtask.status = GoalStatus::InProgress;
-        match llm_node::llm_reason(
-            llm,
-            subtask.assigned_to,
-            &goal.description,
-            &subtask.description,
-        )
-        .await
-        {
-            Ok(result) => {
-                subtask.result = Some(result.clone());
-                subtask.status = GoalStatus::Completed;
-                all_results.push(format!("{}: {}", subtask.assigned_to.name(), result));
-            }
-            Err(e) => {
-                subtask.result = Some(format!("Fehler: {e}"));
-                subtask.status = GoalStatus::Failed;
-            }
+    Ok(())
+}
+
+/// Step 2: Execute a single subtask by index. Returns the result string.
+pub async fn execute_subtask(
+    llm: &LlmRouter,
+    goal: &mut Goal,
+    index: usize,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let subtask = goal
+        .subtasks
+        .get_mut(index)
+        .ok_or("Subtask index out of bounds")?;
+
+    subtask.status = GoalStatus::InProgress;
+
+    let goal_desc = goal.description.clone();
+    let subtask_desc = goal.subtasks[index].description.clone();
+    let assigned_to = goal.subtasks[index].assigned_to;
+
+    match llm_node::llm_reason(llm, assigned_to, &goal_desc, &subtask_desc).await {
+        Ok(result) => {
+            goal.subtasks[index].result = Some(result.clone());
+            goal.subtasks[index].status = GoalStatus::Completed;
+            Ok(result)
+        }
+        Err(e) => {
+            let err_msg = format!("Fehler: {e}");
+            goal.subtasks[index].result = Some(err_msg.clone());
+            goal.subtasks[index].status = GoalStatus::Failed;
+            Err(e)
         }
     }
+}
 
-    // Step 3: CEO summarizes results
+/// Step 3: CEO summarizes all subtask results. Returns the summary string.
+pub async fn summarize_goal(
+    llm: &LlmRouter,
+    goal: &mut Goal,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let all_results: Vec<String> = goal
+        .subtasks
+        .iter()
+        .filter_map(|s| s.result.as_ref().map(|r| format!("{}: {}", s.assigned_to.name(), r)))
+        .collect();
+
     let summary_prompt = format!(
         "Fasse die Ergebnisse der Teilaufgaben zusammen und gib ein Gesamtergebnis.\n\n\
         Ziel: {}\n\n\
@@ -80,10 +117,10 @@ pub async fn execute_goal(
 
     let summary =
         llm_node::llm_reason(llm, AgentRole::Ceo, "Zusammenfassung", &summary_prompt).await?;
-    goal.result = Some(summary);
+    goal.result = Some(summary.clone());
     goal.status = GoalStatus::Completed;
 
-    Ok(())
+    Ok(summary)
 }
 
 /// Parse subtasks from CEO's decomposition response.
