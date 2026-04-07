@@ -106,7 +106,7 @@ pub async fn execute_goal_background(
     // First, do the decomposition phase.
     let result = {
         let mut registry = state.agents.lock().await;
-        registry.execute_goal_decompose(goal_id, &state.llm).await
+        registry.execute_goal_decompose(goal_id, &*state.llm).await
     };
 
     match result {
@@ -127,59 +127,35 @@ pub async fn execute_goal_background(
         }
     }
 
-    // Get subtask info for activity events
-    let subtasks: Vec<(String, String)> = {
-        let registry = state.agents.lock().await;
-        if let Some(goal) = registry.get_goal(goal_id) {
-            goal.subtasks.iter().map(|s| (s.assigned_to.name().to_string(), s.description.clone())).collect()
-        } else {
-            vec![]
-        }
+    // Execute all subtasks in parallel — releases the lock before spawning
+    state.stream.publish_activity(
+        "Agenten arbeiten parallel an Teilaufgaben...".to_string(),
+        None,
+        "progress",
+    );
+
+    let parallel_outcomes = {
+        let mut registry = state.agents.lock().await;
+        registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone()).await
     };
 
-    // Execute subtasks one by one with activity events, tracking results for graph
+    // Publish per-subtask activity events and build results for graph
     let mut subtask_results: Vec<(String, String, bool, u64)> = Vec::new();
-    for (i, (agent_name, task_desc)) in subtasks.iter().enumerate() {
-        state.stream.publish_activity(
-            format!("{} arbeitet an: {}", agent_name, task_desc),
-            Some(agent_name.clone()),
-            "progress",
-        );
-
-        let subtask_start = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-
-        let exec_result = {
-            let mut registry = state.agents.lock().await;
-            registry.execute_goal_subtask(goal_id, i, &state.llm).await
-        };
-
-        let subtask_dur = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
-            - subtask_start;
-
-        match exec_result {
-            Ok(_) => {
-                state.stream.publish_activity(
-                    format!("{} \u{2713} Aufgabe erledigt", agent_name),
-                    Some(agent_name.clone()),
-                    "success",
-                );
-                subtask_results.push((agent_name.clone(), task_desc.clone(), true, subtask_dur));
-            }
-            Err(e) => {
-                state.stream.publish_activity(
-                    format!("{} \u{2717} Fehler: {}", agent_name, e),
-                    Some(agent_name.clone()),
-                    "error",
-                );
-                subtask_results.push((agent_name.clone(), task_desc.clone(), false, subtask_dur));
-            }
+    for (_, agent_name, task_desc, succeeded, duration_ms) in &parallel_outcomes {
+        if *succeeded {
+            state.stream.publish_activity(
+                format!("{} \u{2713} Aufgabe erledigt", agent_name),
+                Some(agent_name.clone()),
+                "success",
+            );
+        } else {
+            state.stream.publish_activity(
+                format!("{} \u{2717} Teilaufgabe fehlgeschlagen", agent_name),
+                Some(agent_name.clone()),
+                "error",
+            );
         }
+        subtask_results.push((agent_name.clone(), task_desc.clone(), *succeeded, *duration_ms));
     }
 
     // CEO summary
@@ -191,7 +167,7 @@ pub async fn execute_goal_background(
 
     let summary_result = {
         let mut registry = state.agents.lock().await;
-        registry.execute_goal_summarize(goal_id, &state.llm).await
+        registry.execute_goal_summarize(goal_id, &*state.llm).await
     };
 
     match summary_result {

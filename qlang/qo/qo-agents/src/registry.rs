@@ -201,6 +201,92 @@ impl AgentRegistry {
         executor::summarize_goal(llm, goal).await
     }
 
+    /// Step 2 (parallel): Execute all subtasks of a goal concurrently.
+    /// Returns a Vec of (index, agent_name, task_desc, result_ok, duration_ms).
+    pub async fn execute_goal_subtasks_parallel(
+        &mut self,
+        goal_id: u64,
+        llm: std::sync::Arc<qo_llm::LlmRouter>,
+    ) -> Vec<(usize, String, String, bool, u64)> {
+        // Collect subtask metadata without holding &mut self across await points
+        let subtask_info: Vec<(usize, crate::agent::AgentRole, String, String)> = {
+            match self.goals.iter().find(|g| g.id == goal_id) {
+                None => return Vec::new(),
+                Some(goal) => goal
+                    .subtasks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, st)| (i, st.assigned_to, st.assigned_to.name().to_string(), st.description.clone()))
+                    .collect(),
+            }
+        };
+        let goal_desc: String = self
+            .goals
+            .iter()
+            .find(|g| g.id == goal_id)
+            .map(|g| g.description.clone())
+            .unwrap_or_default();
+
+        // Mark all involved agents as active
+        for (_, role, _, _) in &subtask_info {
+            if let Some(agent) = self.agents.get_mut(role) {
+                agent.status = crate::agent::AgentStatus::Active;
+            }
+        }
+
+        // Spawn all LLM calls in parallel
+        let mut handles = Vec::new();
+        for (idx, _role, agent_name, desc) in subtask_info.iter().cloned() {
+            let llm_arc = llm.clone();
+            let goal_desc_c = goal_desc.clone();
+            let assigned_to = subtask_info[idx].1;
+            handles.push(tokio::spawn(async move {
+                let start = std::time::Instant::now();
+                let result = crate::llm_node::llm_reason(&*llm_arc, assigned_to, &goal_desc_c, &desc).await;
+                let duration_ms = start.elapsed().as_millis() as u64;
+                (idx, agent_name, desc, result, duration_ms)
+            }));
+        }
+
+        // Collect results and write back
+        let mut outcomes = Vec::new();
+        for handle in handles {
+            match handle.await {
+                Ok((idx, agent_name, task_desc, result, duration_ms)) => {
+                    let succeeded = result.is_ok();
+                    if let Some(goal) = self.goals.iter_mut().find(|g| g.id == goal_id) {
+                        if let Some(subtask) = goal.subtasks.get_mut(idx) {
+                            match result {
+                                Ok(text) => {
+                                    subtask.result = Some(text);
+                                    subtask.status = crate::goal::GoalStatus::Completed;
+                                }
+                                Err(e) => {
+                                    subtask.result = Some(format!("Fehler: {e}"));
+                                    subtask.status = crate::goal::GoalStatus::Failed;
+                                }
+                            }
+                        }
+                    }
+                    let role = subtask_info[idx].1;
+                    if let Some(agent) = self.agents.get_mut(&role) {
+                        agent.status = crate::agent::AgentStatus::Idle;
+                        if succeeded {
+                            agent.tasks_completed += 1;
+                        } else {
+                            agent.tasks_failed += 1;
+                        }
+                    }
+                    outcomes.push((idx, agent_name, task_desc, succeeded, duration_ms));
+                }
+                Err(e) => {
+                    tracing::warn!("subtask spawn join error: {e}");
+                }
+            }
+        }
+        outcomes
+    }
+
     /// Load a previously persisted goal back into the registry.
     pub fn restore_goal(&mut self, goal: Goal) {
         // Keep next_goal_id ahead of any restored id
