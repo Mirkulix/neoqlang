@@ -188,6 +188,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Telegram bot (if configured)
+    if let Ok(telegram_token) = std::env::var("QO_TELEGRAM_TOKEN") {
+        let telegram_chat_id = std::env::var("QO_TELEGRAM_CHAT_ID")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok());
+        let qo_url = format!("http://127.0.0.1:{}", port);
+        let bot = qo_telegram::TelegramBot::new(telegram_token, qo_url, telegram_chat_id);
+        tokio::spawn(async move {
+            bot.run().await;
+        });
+        tracing::info!("Telegram bot started");
+    }
+
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("QO starting on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
