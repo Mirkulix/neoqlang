@@ -1,33 +1,33 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@700;900&display=swap');
 
 :root {
-  --bg-primary: #000000;
-  --bg-surface: #0a0a0f;
-  --bg-elevated: #12121a;
-  --bg-input: #1a1a24;
+  --bg-primary: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-input: #e2e8f0;
 
-  --text-primary: #e8e8ed;
-  --text-secondary: #8b8b9e;
-  --text-muted: #4a4a5e;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
 
   --accent-primary: #2563eb;
   --accent-secondary: #3b82f6;
-  --accent-success: #22c55e;
-  --accent-warning: #f59e0b;
-  --accent-danger: #ef4444;
-  --accent-info: #06b6d4;
+  --accent-success: #16a34a;
+  --accent-warning: #d97706;
+  --accent-danger: #dc2626;
+  --accent-info: #0891b2;
 
-  --accent-achtsamkeit: #22c55e;
-  --accent-anerkennung: #a855f7;
-  --accent-aufmerksamkeit: #f97316;
-  --accent-entwicklung: #eab308;
-  --accent-sinn: #3b82f6;
+  --accent-achtsamkeit: #16a34a;
+  --accent-anerkennung: #9333ea;
+  --accent-aufmerksamkeit: #ea580c;
+  --accent-entwicklung: #ca8a04;
+  --accent-sinn: #2563eb;
 
-  --border: #1e1e2a;
+  --border: #e2e8f0;
   --border-active: #2563eb33;
 
-  --glow-primary: 0 0 12px #2563eb40;
-  --glow-success: 0 0 12px #22c55e40;
+  --glow-primary: 0 1px 3px #2563eb20;
+  --glow-success: 0 1px 3px #16a34a20;
 
   --sidebar-width: 220px;
   --activity-height: 200px;
