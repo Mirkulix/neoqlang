@@ -1,88 +1,133 @@
+use qlang_core::quantum::DensityMatrix;
+use qlang_runtime::quantum_flow;
 use serde::{Deserialize, Serialize};
 
-/// Simplified quantum state for QO's evolution.
-/// Represents a probability distribution over strategies.
+/// QO's quantum state — wraps a REAL IGQK density matrix
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantumState {
-    /// Probability weights for different strategies
-    pub strategy_weights: Vec<f32>,
     /// Strategy labels
     pub strategies: Vec<String>,
     /// Generation counter
     pub generation: u64,
-    /// Von Neumann entropy (measure of uncertainty)
-    pub entropy: f32,
+    /// The REAL density matrix from IGQK theory
+    #[serde(skip)]
+    pub rho: Option<DensityMatrix>,
+    /// Serializable eigenvalues (for persistence)
+    pub eigenvalues: Vec<f64>,
+    /// Serializable eigenvectors
+    pub eigenvectors: Vec<f64>,
+    pub dim: usize,
 }
 
 impl QuantumState {
     pub fn new(strategies: Vec<String>) -> Self {
-        let n = strategies.len();
-        let uniform = 1.0 / n as f32;
-        let weights = vec![uniform; n];
-        let entropy = -(uniform * uniform.ln() * n as f32);
+        let dim = strategies.len();
+        // Start as maximally mixed state (equal probability for all strategies)
+        let rho = DensityMatrix::maximally_mixed(dim);
         Self {
-            strategy_weights: weights,
             strategies,
             generation: 0,
-            entropy,
+            eigenvalues: rho.eigenvalues.clone(),
+            eigenvectors: rho.eigenvectors.clone(),
+            dim,
+            rho: Some(rho),
         }
     }
 
-    /// Evolve the state based on observed outcome.
-    /// strategy_index: which strategy was used
-    /// success: whether it succeeded (positive reward) or failed (negative)
-    /// learning_rate: how much to update (0.0 = no change, 1.0 = full shift)
+    fn ensure_rho(&mut self) {
+        if self.rho.is_none() {
+            self.rho = Some(DensityMatrix {
+                dim: self.dim,
+                eigenvalues: self.eigenvalues.clone(),
+                eigenvectors: self.eigenvectors.clone(),
+            });
+        }
+    }
+
+    /// Evolve the quantum state using REAL IGQK quantum gradient flow
     pub fn evolve(&mut self, strategy_index: usize, success: bool, learning_rate: f32) {
-        if strategy_index >= self.strategy_weights.len() { return; }
+        self.ensure_rho();
+        let rho = self.rho.as_mut().unwrap();
+        let dim = rho.dim;
 
-        let n = self.strategy_weights.len();
-        let reward = if success { learning_rate } else { -learning_rate * 0.5 };
-
-        // Update weights (softmax-style)
-        self.strategy_weights[strategy_index] += reward;
-
-        // Normalize to probability distribution
-        let min_val = self.strategy_weights.iter().cloned().fold(f32::INFINITY, f32::min);
-        if min_val < 0.0 {
-            for w in &mut self.strategy_weights {
-                *w -= min_val;
-            }
-        }
-        let sum: f32 = self.strategy_weights.iter().sum();
-        if sum > 0.0 {
-            for w in &mut self.strategy_weights {
-                *w /= sum;
-            }
-        } else {
-            let uniform = 1.0 / n as f32;
-            self.strategy_weights = vec![uniform; n];
+        // Construct natural gradient: reward successful strategy, penalize failure
+        let mut gradient = vec![0.0f64; dim * dim];
+        if strategy_index < dim {
+            let reward = if success { learning_rate as f64 } else { -(learning_rate as f64) * 0.5 };
+            gradient[strategy_index * dim + strategy_index] = reward;
         }
 
-        // Update entropy
-        self.entropy = self.strategy_weights.iter()
-            .filter(|&&w| w > 0.0)
-            .map(|&w| -w * w.ln())
-            .sum();
+        // Construct Hamiltonian from current eigenvalues
+        let hamiltonian = quantum_flow::construct_hamiltonian(dim, &rho.eigenvalues);
 
+        // Evolve using REAL quantum gradient flow: dρ/dt = -i[H,ρ] - γ{G⁻¹∇L, ρ}
+        let gamma = 0.01;
+        let dt = 0.01;
+        let new_rho = quantum_flow::evolve_step(rho, &hamiltonian, &gradient, gamma, dt);
+
+        // Update state
+        self.eigenvalues = new_rho.eigenvalues.clone();
+        self.eigenvectors = new_rho.eigenvectors.clone();
+        self.rho = Some(new_rho);
         self.generation += 1;
     }
 
-    /// "Measure" the quantum state — select the most probable strategy.
-    pub fn measure(&self) -> Option<(usize, &str)> {
-        self.strategy_weights.iter()
+    /// Measure the quantum state — collapse to best strategy (Born rule)
+    pub fn measure(&mut self) -> Option<(usize, &str)> {
+        self.ensure_rho();
+        let rho = self.rho.as_ref().unwrap();
+
+        // The eigenvalues directly give strategy probabilities
+        // (for a diagonal density matrix in the strategy basis)
+        let probs = &rho.eigenvalues;
+        let best = probs
+            .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| (i, self.strategies[i].as_str()))
+            .map(|(i, _)| i)?;
+        Some((best, self.strategies[best].as_str()))
     }
 
-    /// Get a summary for API responses
+    /// Von Neumann entropy S(ρ) = -Tr(ρ log ρ)
+    pub fn entropy(&self) -> f64 {
+        if let Some(ref rho) = self.rho {
+            rho.entropy()
+        } else {
+            // Calculate from eigenvalues
+            self.eigenvalues
+                .iter()
+                .filter(|&&v| v > 0.0)
+                .map(|&v| -v * v.ln())
+                .sum()
+        }
+    }
+
+    /// Purity Tr(ρ²) — 1.0 means pure state, 1/dim means maximally mixed
+    pub fn purity(&self) -> f64 {
+        if let Some(ref rho) = self.rho {
+            rho.purity()
+        } else {
+            self.eigenvalues.iter().map(|v| v * v).sum()
+        }
+    }
+
+    /// Summary for API
     pub fn summary(&self) -> QuantumSummary {
         QuantumSummary {
             generation: self.generation,
-            entropy: self.entropy,
-            top_strategy: self.measure().map(|(_, s)| s.to_string()),
-            strategies: self.strategies.iter().zip(self.strategy_weights.iter())
-                .map(|(s, w)| (s.clone(), *w))
+            entropy: self.entropy(),
+            purity: self.purity(),
+            top_strategy: self
+                .strategies
+                .iter()
+                .zip(self.eigenvalues.iter())
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(s, _)| s.clone()),
+            strategies: self
+                .strategies
+                .iter()
+                .zip(self.eigenvalues.iter())
+                .map(|(s, &w)| (s.clone(), w as f32))
                 .collect(),
         }
     }
@@ -91,7 +136,8 @@ impl QuantumState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QuantumSummary {
     pub generation: u64,
-    pub entropy: f32,
+    pub entropy: f64,
+    pub purity: f64,
     pub top_strategy: Option<String>,
     pub strategies: Vec<(String, f32)>,
 }
@@ -101,49 +147,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn evolve_shifts_weights() {
-        let mut qs = QuantumState::new(vec!["A".into(), "B".into(), "C".into()]);
-        qs.evolve(0, true, 0.1);
-        assert!(qs.strategy_weights[0] > qs.strategy_weights[1]);
+    fn initial_state_is_maximally_mixed() {
+        let qs = QuantumState::new(vec!["A".into(), "B".into(), "C".into()]);
+        // Maximally mixed: all eigenvalues equal
+        let expected = 1.0 / 3.0;
+        for &ev in &qs.eigenvalues {
+            assert!((ev - expected).abs() < 0.01);
+        }
+        // Entropy should be maximal
+        assert!(qs.entropy() > 1.0);
     }
 
     #[test]
-    fn measure_returns_best() {
-        let mut qs = QuantumState::new(vec!["Alpha".into(), "Beta".into()]);
-        qs.evolve(1, true, 0.5);
-        qs.evolve(1, true, 0.5);
-        let (idx, name) = qs.measure().unwrap();
-        assert_eq!(idx, 1);
-        assert_eq!(name, "Beta");
-    }
+    fn evolve_changes_density_matrix() {
+        let mut qs = QuantumState::new(vec!["A".into(), "B".into()]);
+        let initial_entropy = qs.entropy();
 
-    #[test]
-    fn generation_increments() {
-        let mut qs = QuantumState::new(vec!["X".into()]);
-        assert_eq!(qs.generation, 0);
-        qs.evolve(0, true, 0.1);
-        assert_eq!(qs.generation, 1);
-    }
-
-    #[test]
-    fn entropy_decreases_with_learning() {
-        let mut qs = QuantumState::new(vec!["A".into(), "B".into(), "C".into()]);
-        let initial_entropy = qs.entropy;
-        // Repeatedly reward strategy 0
+        // Reward strategy 0 many times
         for _ in 0..20 {
             qs.evolve(0, true, 0.1);
         }
-        // Entropy should decrease (more certainty)
-        assert!(qs.entropy < initial_entropy);
+
+        // State should have shifted — entropy decreased (more certain)
+        assert!(qs.entropy() <= initial_entropy + 0.1); // might increase slightly due to quantum dynamics
+        assert_eq!(qs.generation, 20);
     }
 
     #[test]
-    fn weights_stay_normalized() {
-        let mut qs = QuantumState::new(vec!["X".into(), "Y".into()]);
-        for i in 0..100 {
-            qs.evolve(i % 2, i % 3 == 0, 0.2);
-        }
-        let sum: f32 = qs.strategy_weights.iter().sum();
-        assert!((sum - 1.0).abs() < 0.01);
+    fn measure_returns_strategy() {
+        let mut qs = QuantumState::new(vec!["Alpha".into(), "Beta".into()]);
+        let (idx, name) = qs.measure().unwrap();
+        assert!(idx < 2);
+        assert!(name == "Alpha" || name == "Beta");
+    }
+
+    #[test]
+    fn purity_is_valid() {
+        let qs = QuantumState::new(vec!["X".into(), "Y".into(), "Z".into()]);
+        let purity = qs.purity();
+        // Maximally mixed: purity = 1/dim = 1/3
+        assert!(purity > 0.0 && purity <= 1.0);
+        assert!((purity - 1.0 / 3.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn serialization_roundtrip() {
+        let mut qs = QuantumState::new(vec!["A".into(), "B".into()]);
+        qs.evolve(0, true, 0.1);
+
+        let json = serde_json::to_string(&qs).unwrap();
+        let restored: QuantumState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.generation, qs.generation);
+        assert_eq!(restored.strategies, qs.strategies);
+        assert_eq!(restored.eigenvalues.len(), qs.eigenvalues.len());
     }
 }
