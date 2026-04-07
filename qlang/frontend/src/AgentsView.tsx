@@ -84,7 +84,7 @@ export default function AgentsView() {
     const fetchAgents = () => {
       fetch('/api/agents')
         .then(r => r.json())
-        .then(data => setAgents(Array.isArray(data) ? data : []))
+        .then(data => setAgents(Array.isArray(data) ? data : (data?.agents ?? [])))
         .catch(() => {})
     }
     fetchAgents()
