@@ -103,13 +103,14 @@ pub async fn execute_goal_background(
     );
 
     // We need to execute the goal step by step with activity events.
-    // First, do the decomposition phase.
-    let result = {
+    // First, do the decomposition phase — pass quantum state for strategy steering.
+    let decompose_result = {
         let mut registry = state.agents.lock().await;
-        registry.execute_goal_decompose(goal_id, &*state.llm).await
+        let quantum = state.quantum.lock().await;
+        registry.execute_goal_decompose(goal_id, &*state.llm, Some(&*quantum)).await
     };
 
-    match result {
+    let chosen_strategy = match decompose_result {
         Err(e) => {
             state.stream.publish_activity(
                 format!("CEO ✗ Fehler bei Dekomposition: {}", e),
@@ -118,14 +119,15 @@ pub async fn execute_goal_background(
             );
             return;
         }
-        Ok(subtask_count) => {
+        Ok((subtask_count, strategy)) => {
             state.stream.publish_activity(
-                format!("CEO hat {} Teilaufgaben erstellt", subtask_count),
+                format!("CEO hat {} Teilaufgaben erstellt [Strategie: {}]", subtask_count, strategy),
                 Some("CEO".to_string()),
                 "success",
             );
+            strategy
         }
-    }
+    };
 
     // Execute all subtasks in parallel — releases the lock before spawning
     state.stream.publish_activity(
@@ -211,6 +213,29 @@ pub async fn execute_goal_background(
     {
         let mut registry = state.agents.lock().await;
         registry.finalize_goal(goal_id);
+    }
+
+    // Evolve quantum state based on goal outcome
+    {
+        let goal_succeeded = {
+            let registry = state.agents.lock().await;
+            registry.get_goal(goal_id)
+                .map(|g| g.subtasks.iter().all(|st| st.status == qo_agents::GoalStatus::Completed))
+                .unwrap_or(false)
+        };
+        let strategy_idx = qo_agents::executor::strategy_index(&chosen_strategy);
+        let mut quantum = state.quantum.lock().await;
+        quantum.evolve(strategy_idx, goal_succeeded, 0.1);
+        tracing::info!(
+            "Quantum evolved: strategy='{}' idx={} success={} gen={}",
+            chosen_strategy, strategy_idx, goal_succeeded, quantum.generation
+        );
+        // Persist updated quantum state
+        if let Ok(json) = serde_json::to_string(&*quantum) {
+            if let Err(e) = state.store.save_quantum_state(&json) {
+                tracing::warn!("failed to persist quantum state: {e}");
+            }
+        }
     }
 
     // Mini-evolution: pattern analysis after goal completion

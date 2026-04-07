@@ -73,13 +73,10 @@ impl QuantumState {
     }
 
     /// Measure the quantum state — collapse to best strategy (Born rule)
-    pub fn measure(&mut self) -> Option<(usize, &str)> {
-        self.ensure_rho();
-        let rho = self.rho.as_ref().unwrap();
-
+    pub fn measure(&self) -> Option<(usize, &str)> {
         // The eigenvalues directly give strategy probabilities
         // (for a diagonal density matrix in the strategy basis)
-        let probs = &rho.eigenvalues;
+        let probs = &self.eigenvalues;
         let best = probs
             .iter()
             .enumerate()

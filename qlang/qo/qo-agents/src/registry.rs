@@ -1,6 +1,7 @@
 use crate::agent::{Agent, AgentRole, AgentStatus};
 use crate::goal::{Goal, GoalStatus};
 use crate::executor;
+use qo_evolution::QuantumState;
 use qo_llm::LlmRouter;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -78,11 +79,13 @@ impl AgentRegistry {
     }
 
     /// Execute a goal. Marks involved agents as active, then idle.
+    /// Returns (chosen_strategy_name, goal_succeeded) on success.
     pub async fn execute_goal(
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        quantum_state: Option<&QuantumState>,
+    ) -> Result<(String, bool), Box<dyn std::error::Error + Send + Sync>> {
         // Mark CEO active
         if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
             ceo.status = AgentStatus::Active;
@@ -94,7 +97,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        let result = executor::execute_goal(llm, goal).await;
+        let result = executor::execute_goal_qlang(llm, goal, quantum_state).await;
 
         // Update agent stats based on subtask results
         if let Some(goal) = self.goals.iter().find(|g| g.id == goal_id) {
@@ -119,15 +122,17 @@ impl AgentRegistry {
             }
         }
 
-        result
+        result.map(|(_, strategy, succeeded)| (strategy, succeeded))
     }
 
-    /// Step 1: CEO decomposes the goal into subtasks. Returns subtask count.
+    /// Step 1: CEO decomposes the goal into subtasks.
+    /// Returns (subtask_count, chosen_strategy).
     pub async fn execute_goal_decompose(
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        quantum_state: Option<&QuantumState>,
+    ) -> Result<(usize, String), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
             ceo.status = AgentStatus::Active;
         }
@@ -138,9 +143,9 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        executor::decompose_goal(llm, goal).await?;
+        let chosen_strategy = executor::decompose_goal(llm, goal, quantum_state).await?;
         let count = goal.subtasks.len();
-        Ok(count)
+        Ok((count, chosen_strategy))
     }
 
     /// Step 2: Execute a single subtask by index.

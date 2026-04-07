@@ -21,6 +21,83 @@ fn now_ms() -> u64 {
 }
 
 // ============================================================
+// Simulation helper — runs before CEO decomposition
+// ============================================================
+
+/// Run a fast Monte-Carlo simulation across 4 standard strategies.
+/// Returns (recommended_strategy_name, confidence_0_to_1).
+pub fn simulate_before_execution(goal_description: &str) -> (String, f32) {
+    let mut scenario = Scenario::new(1, goal_description.to_string());
+
+    scenario.add_strategy(Strategy {
+        name: "Direkte Ausführung".into(),
+        agents_involved: vec!["Researcher".into()],
+        steps: vec!["Recherchiere und liefere Ergebnis".into()],
+        estimated_cost: 0.0,
+        estimated_duration_ms: 500,
+    });
+    scenario.add_strategy(Strategy {
+        name: "Dekomposition + Delegation".into(),
+        agents_involved: vec!["CEO".into(), "Researcher".into(), "Developer".into()],
+        steps: vec![
+            "Zerlege".into(),
+            "Recherchiere".into(),
+            "Implementiere".into(),
+            "Verifiziere".into(),
+        ],
+        estimated_cost: 0.0,
+        estimated_duration_ms: 2000,
+    });
+    scenario.add_strategy(Strategy {
+        name: "Recherche zuerst".into(),
+        agents_involved: vec!["Researcher".into(), "Strategist".into()],
+        steps: vec!["Recherchiere".into(), "Analysiere und plane".into()],
+        estimated_cost: 0.0,
+        estimated_duration_ms: 1000,
+    });
+    scenario.add_strategy(Strategy {
+        name: "Kreative Lösung".into(),
+        agents_involved: vec!["Artisan".into(), "Researcher".into()],
+        steps: vec!["Brainstorme".into(), "Recherchiere".into()],
+        estimated_cost: 0.0,
+        estimated_duration_ms: 800,
+    });
+
+    let mut sim = Simulator::new(30);
+    let results = sim.simulate(&scenario);
+    let prediction = predict(&scenario, &results);
+
+    (prediction.recommended_name.clone(), prediction.confidence)
+}
+
+/// Map a strategy name to the CEO decomposition instruction.
+pub fn strategy_instruction(chosen_strategy: &str) -> &'static str {
+    match chosen_strategy {
+        "Direkte Ausführung" => {
+            "Delegiere diese Aufgabe an EINEN Agenten (Researcher). Keine Zerlegung nötig."
+        }
+        "Recherche zuerst" => {
+            "Beginne mit Recherche (Researcher), dann Analyse (Strategist). Maximal 2 Schritte."
+        }
+        "Kreative Lösung" => {
+            "Nutze den Artisan für einen kreativen Ansatz, unterstützt durch Researcher."
+        }
+        _ => "Zerlege in 2-4 Teilaufgaben und delegiere an passende Agenten.",
+    }
+}
+
+/// Return strategy index (0-3) for the 4 standard strategies.
+pub fn strategy_index(name: &str) -> usize {
+    match name {
+        "Direkte Ausführung" => 0,
+        "Dekomposition + Delegation" => 1,
+        "Recherche zuerst" => 2,
+        "Kreative Lösung" => 3,
+        _ => 1,
+    }
+}
+
+// ============================================================
 // QLANG Graph Builders — produce real Graph structs
 // ============================================================
 
@@ -149,11 +226,12 @@ pub async fn execute_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let graph_data = execute_goal_qlang(llm, goal).await?;
+    let (graph_data, chosen_strategy, _succeeded) = execute_goal_qlang(llm, goal, None).await?;
 
     // Log QLANG graph stats
     tracing::info!(
-        "QLANG execution complete: {} graphs ({} bytes total binary), {} executions",
+        "QLANG execution complete: strategy='{}', {} graphs ({} bytes total binary), {} executions",
+        chosen_strategy,
         graph_data.graphs.len(),
         graph_data.total_binary_bytes,
         graph_data.executions.len(),
@@ -166,10 +244,12 @@ pub async fn execute_goal(
 }
 
 /// Core implementation: builds real QLANG graphs and executes them.
+/// Returns (graph_data, chosen_strategy_name, goal_succeeded).
 pub async fn execute_goal_qlang(
     llm: &LlmRouter,
     goal: &mut Goal,
-) -> Result<ExecutionGraphData, Box<dyn std::error::Error + Send + Sync>> {
+    quantum_state: Option<&QuantumState>,
+) -> Result<(ExecutionGraphData, String, bool), Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
     let mut graph_data = ExecutionGraphData::new();
 
@@ -209,15 +289,46 @@ pub async fn execute_goal_qlang(
     // Build QLMS message CEO → (itself, broadcasting)
     let _ceo_msg = build_agent_message("ceo", "team", ceo_graph.clone(), &goal.description);
 
-    // --- Step 2: CEO reasoning via LLM ---
+    // --- Step 2a: Run simulation to predict best strategy ---
+    let (sim_strategy, sim_confidence) = simulate_before_execution(&goal.description);
+    tracing::info!(
+        "Simulation recommended '{}' (confidence: {:.0}%)",
+        sim_strategy,
+        sim_confidence * 100.0
+    );
+
+    // --- Step 2b: Get quantum recommendation ---
+    let (quantum_strategy, quantum_confidence) = if let Some(ref qs) = quantum_state {
+        let confidence = qs.purity() as f32;
+        match qs.measure() {
+            Some((_, name)) => (name.to_string(), confidence),
+            None => ("Dekomposition + Delegation".to_string(), 0.0f32),
+        }
+    } else {
+        ("Dekomposition + Delegation".to_string(), 0.0f32)
+    };
+    tracing::info!(
+        "Quantum recommended '{}' (purity/confidence: {:.2})",
+        quantum_strategy,
+        quantum_confidence
+    );
+
+    // Prefer quantum when it has high purity (confident), else use simulation
+    let chosen_strategy = if quantum_confidence > 0.6 {
+        quantum_strategy.clone()
+    } else {
+        sim_strategy.clone()
+    };
+    tracing::info!("Chosen strategy: '{}'", chosen_strategy);
+
+    // --- Step 2c: CEO reasoning via LLM using chosen strategy ---
+    let instruction = strategy_instruction(&chosen_strategy);
     let decomposition_prompt = format!(
-        "Zerlege dieses Ziel in 2-4 konkrete Teilaufgaben. Für jede Aufgabe, bestimme welcher Agent sie bearbeiten soll.\n\
-        Verfügbare Agenten: Researcher (Analyse/Recherche), Developer (Code/Technik), Strategist (Planung), Artisan (Kreativ).\n\n\
+        "Strategie: {chosen_strategy} (Konfidenz: {sim_confidence:.0}%)\n\
+        Anweisung: {instruction}\n\n\
         Ziel: {}\n\n\
-        Antworte im Format:\n\
-        1. [Agent] Aufgabe\n\
-        2. [Agent] Aufgabe\n\
-        ...",
+        Verfügbare Agenten: Researcher, Developer, Strategist, Artisan.\n\
+        Antworte im Format:\n1. [Agent] Aufgabe",
         goal.description
     );
     let t0 = now_ms();
@@ -387,27 +498,61 @@ pub async fn execute_goal_qlang(
     goal.status = GoalStatus::Completed;
     goal.execution_graph = Some(ExecutionGraph { nodes, edges });
 
-    Ok(graph_data)
+    let goal_succeeded = goal.subtasks.iter().all(|st| st.status == GoalStatus::Completed);
+    Ok((graph_data, chosen_strategy, goal_succeeded))
 }
 
 // ============================================================
 // Legacy entry points (kept for backward compat)
 // ============================================================
 
+/// Decomposes a goal using simulation + optional quantum steering.
+/// Returns the chosen strategy name.
 pub async fn decompose_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    quantum_state: Option<&QuantumState>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
 
+    // Run simulation to predict best strategy
+    let (sim_strategy, sim_confidence) = simulate_before_execution(&goal.description);
+    tracing::info!(
+        "Simulation recommended '{}' (confidence: {:.0}%)",
+        sim_strategy,
+        sim_confidence * 100.0
+    );
+
+    // Get quantum recommendation
+    let (quantum_strategy, quantum_confidence) = if let Some(ref qs) = quantum_state {
+        let confidence = qs.purity() as f32;
+        match qs.measure() {
+            Some((_, name)) => (name.to_string(), confidence),
+            None => ("Dekomposition + Delegation".to_string(), 0.0f32),
+        }
+    } else {
+        ("Dekomposition + Delegation".to_string(), 0.0f32)
+    };
+    tracing::info!(
+        "Quantum recommended '{}' (purity/confidence: {:.2})",
+        quantum_strategy,
+        quantum_confidence
+    );
+
+    let chosen_strategy = if quantum_confidence > 0.6 {
+        quantum_strategy
+    } else {
+        sim_strategy
+    };
+    tracing::info!("Chosen strategy for decomposition: '{}'", chosen_strategy);
+
+    let instruction = strategy_instruction(&chosen_strategy);
     let decomposition_prompt = format!(
-        "Zerlege dieses Ziel in 2-4 konkrete Teilaufgaben. Für jede Aufgabe, bestimme welcher Agent sie bearbeiten soll.\n\
-        Verfügbare Agenten: Researcher (Analyse/Recherche), Developer (Code/Technik), Strategist (Planung), Artisan (Kreativ).\n\n\
+        "Strategie: {chosen_strategy} (Konfidenz: {sim_confidence:.0}%)\n\
+        Anweisung: {instruction}\n\n\
         Ziel: {}\n\n\
-        Antworte im Format:\n\
-        1. [Agent] Aufgabe\n\
-        2. [Agent] Aufgabe\n\
-        ...",
+        Verfügbare Agenten: Researcher, Developer, Strategist, Artisan.\n\
+        Antworte im Format:\n1. [Agent] Aufgabe",
         goal.description
     );
 
@@ -430,7 +575,7 @@ pub async fn decompose_goal(
         });
     }
 
-    Ok(())
+    Ok(chosen_strategy)
 }
 
 pub async fn execute_subtask(
