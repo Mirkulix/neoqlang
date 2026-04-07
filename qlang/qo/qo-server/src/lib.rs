@@ -1,6 +1,8 @@
+pub mod auth;
 pub mod routes;
 
 use axum::{
+    middleware,
     routing::{delete, get, post, put},
     Router,
 };
@@ -15,7 +17,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 pub struct AppState {
-    pub llm: LlmRouter,
+    pub llm: Arc<LlmRouter>,
     pub store: Store,
     pub graph_store: GraphStore,
     pub consciousness: Mutex<ConsciousnessState>,
@@ -25,6 +27,7 @@ pub struct AppState {
     pub patterns: Mutex<PatternDetector>,
     pub proposals: Mutex<ProposalEngine>,
     pub quantum: Mutex<QuantumState>,
+    pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
 }
 
 pub struct QoConfig {
@@ -35,6 +38,8 @@ pub struct QoConfig {
     pub data_dir: std::path::PathBuf,
     pub obsidian_vault: std::path::PathBuf,
     pub static_dir: Option<std::path::PathBuf>,
+    /// Optional API token for bearer auth (reads QO_AUTH_TOKEN from env if None)
+    pub auth_token: Option<String>,
 }
 
 impl Default for QoConfig {
@@ -46,6 +51,7 @@ impl Default for QoConfig {
             data_dir: std::path::PathBuf::from("data"),
             obsidian_vault: std::path::PathBuf::from("vault"),
             static_dir: None,
+            auth_token: None,
         }
     }
 }
@@ -59,7 +65,7 @@ pub fn build_app(
 
     let store = Store::open(&db_path)?;
     let graph_store = GraphStore::new(store.db())?;
-    let llm = LlmRouter::new(config.groq_api_key, config.cloud_config);
+    let llm = Arc::new(LlmRouter::new(config.groq_api_key, config.cloud_config));
     let obsidian = ObsidianBridge::new(config.obsidian_vault);
     let stream = ConsciousnessStream::new(64);
     let consciousness = Mutex::new(ConsciousnessState::default());
@@ -131,6 +137,22 @@ pub fn build_app(
         }
     }
 
+    // Load configured providers from redb so they are available for routing on startup
+    let mut configured_providers = Vec::new();
+    if let Ok(providers) = store.list_providers() {
+        for (_, json) in providers {
+            if let Ok(cfg) = serde_json::from_str::<qo_llm::ProviderConfig>(&json) {
+                if cfg.enabled {
+                    configured_providers.push(cfg);
+                }
+            }
+        }
+    }
+    tracing::info!(
+        "Loaded {} configured providers from store",
+        configured_providers.len()
+    );
+
     tracing::info!("Restored: {} goals, {} patterns, {} proposals, gen {}",
         agents_reg.list_goals().len(),
         pattern_det.all_patterns().len(),
@@ -149,6 +171,7 @@ pub fn build_app(
         patterns: Mutex::new(pattern_det),
         proposals: Mutex::new(proposal_eng),
         quantum: Mutex::new(quantum_st),
+        configured_providers: Mutex::new(configured_providers),
     });
 
     let api_router = Router::new()
@@ -188,6 +211,9 @@ pub fn build_app(
         .route("/api/providers/{id}/toggle", put(routes::providers::toggle_provider))
         .route("/api/providers/{id}/edit", put(routes::providers::update_provider))
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
+        .route("/api/simulation/run", post(routes::simulation::run_simulation))
+        .route("/api/simulation/strategies", get(routes::simulation::list_strategies))
+        .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {

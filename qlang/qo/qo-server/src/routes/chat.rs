@@ -142,6 +142,10 @@ pub async fn chat(
         "id": id,
         "user": req.message,
         "assistant": response,
+        "timestamp": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
     });
     let entry_str = entry.to_string();
 
