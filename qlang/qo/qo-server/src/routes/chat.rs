@@ -64,8 +64,30 @@ pub async fn chat(
         None
     };
 
+    // Search for relevant past context
+    let context = {
+        let mem = state.memory.lock().await;
+        let relevant = mem.recall(&req.message, 3);
+        drop(mem);
+        if relevant.is_empty() {
+            String::new()
+        } else {
+            let mut ctx_parts = Vec::new();
+            for (key, _score) in &relevant {
+                if let Ok(Some(text)) = state.store.get(key) {
+                    ctx_parts.push(format!("[Erinnerung: {}]", text));
+                }
+            }
+            if ctx_parts.is_empty() {
+                String::new()
+            } else {
+                format!("\n\nRelevanter Kontext aus früheren Gesprächen:\n{}\n", ctx_parts.join("\n"))
+            }
+        }
+    };
+
     let messages = vec![
-        ("system".to_string(), SYSTEM_PROMPT.to_string()),
+        ("system".to_string(), format!("{}{}", SYSTEM_PROMPT, context)),
         ("user".to_string(), req.message.clone()),
     ];
 
@@ -151,6 +173,17 @@ pub async fn chat(
 
     if let Err(e) = state.store.store_chat(id, &entry_str) {
         tracing::warn!("failed to store chat in redb: {e}");
+    }
+
+    // Remember this interaction in long-term memory
+    {
+        let mut mem = state.memory.lock().await;
+        let mem_key = format!("chat_{}", id);
+        let response_snippet = &response[..response.len().min(200)];
+        let memory_text = format!("User: {}\nQO: {}", req.message, response_snippet);
+        mem.remember(mem_key.clone(), &memory_text, &state.store);
+        // Also store the full text in KV for retrieval
+        let _ = state.store.set(&mem_key, &memory_text);
     }
 
     // Build and store QLANG graph for this chat interaction

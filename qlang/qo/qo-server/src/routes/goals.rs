@@ -185,6 +185,14 @@ pub async fn execute_goal_background(
             if let Err(e) = state.store.log_action("goal_completed", &description, &short) {
                 tracing::warn!("failed to log goal_completed action: {e}");
             }
+            // Remember goal and result in long-term memory
+            {
+                let mut mem = state.memory.lock().await;
+                let mem_key = format!("goal_{}", goal_id);
+                let memory_text = format!("Ziel: {}\nErgebnis: {}", description, short);
+                mem.remember(mem_key.clone(), &memory_text, &state.store);
+                let _ = state.store.set(&mem_key, &memory_text);
+            }
         }
         Err(e) => {
             state.stream.publish_activity(

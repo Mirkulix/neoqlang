@@ -6,5 +6,6 @@ pub mod goals;
 pub mod graphs;
 pub mod health;
 pub mod history;
+pub mod memory;
 pub mod providers;
 pub mod simulation;

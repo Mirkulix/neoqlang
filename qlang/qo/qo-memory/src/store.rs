@@ -11,6 +11,7 @@ const AGENTS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("agents")
 const PATTERNS_TABLE: TableDefinition<u64, &str> = TableDefinition::new("patterns");
 const PROPOSALS_TABLE: TableDefinition<u64, &str> = TableDefinition::new("proposals");
 const QUANTUM_TABLE: TableDefinition<&str, &str> = TableDefinition::new("quantum_state");
+const EMBEDDINGS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("embeddings");
 
 pub struct Store {
     db: Arc<Database>,
@@ -31,6 +32,7 @@ impl Store {
             write_txn.open_table(PATTERNS_TABLE)?;
             write_txn.open_table(PROPOSALS_TABLE)?;
             write_txn.open_table(QUANTUM_TABLE)?;
+            write_txn.open_table(EMBEDDINGS_TABLE)?;
         }
         write_txn.commit()?;
         Ok(Self { db })
@@ -283,6 +285,37 @@ impl Store {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(QUANTUM_TABLE)?;
         Ok(table.get("current")?.map(|v| v.value().to_owned()))
+    }
+
+    // ---- Embeddings ----
+
+    /// Serialize an f32 vector to bytes and persist it under `key`.
+    pub fn store_embedding(&self, key: &str, bytes: &[u8]) -> Result<(), redb::Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(EMBEDDINGS_TABLE)?;
+            table.insert(key, bytes)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load all persisted embeddings as `(key, Vec<f32>)` pairs.
+    pub fn load_all_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>, redb::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(EMBEDDINGS_TABLE)?;
+        let mut results = Vec::new();
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            let bytes = v.value();
+            // Deserialize little-endian f32 values
+            let floats: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            results.push((k.value().to_owned(), floats));
+        }
+        Ok(results)
     }
 }
 

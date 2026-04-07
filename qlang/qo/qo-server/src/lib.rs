@@ -10,7 +10,7 @@ use qo_agents::{AgentRegistry, AgentRole};
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
-use qo_memory::{GraphStore, ObsidianBridge, Store};
+use qo_memory::{GraphStore, MemoryContext, ObsidianBridge, Store};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -28,6 +28,7 @@ pub struct AppState {
     pub proposals: Mutex<ProposalEngine>,
     pub quantum: Mutex<QuantumState>,
     pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
+    pub memory: Mutex<MemoryContext>,
 }
 
 pub struct QoConfig {
@@ -147,6 +148,11 @@ pub fn build_app(
         }
     }
 
+    // Load persisted embeddings into vector store for long-term memory
+    let mut memory_ctx = MemoryContext::new(64);
+    memory_ctx.load_from_store(&store);
+    tracing::info!("Loaded {} memories from vector store", memory_ctx.count());
+
     // Load configured providers from redb so they are available for routing on startup
     let mut configured_providers = Vec::new();
     if let Ok(providers) = store.list_providers() {
@@ -182,6 +188,7 @@ pub fn build_app(
         proposals: Mutex::new(proposal_eng),
         quantum: Mutex::new(quantum_st),
         configured_providers: Mutex::new(configured_providers),
+        memory: Mutex::new(memory_ctx),
     });
 
     let api_router = Router::new()
@@ -223,6 +230,8 @@ pub fn build_app(
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
         .route("/api/simulation/run", post(routes::simulation::run_simulation))
         .route("/api/simulation/strategies", get(routes::simulation::list_strategies))
+        .route("/api/memory/stats", get(routes::memory::memory_stats))
+        .route("/api/memory/search", get(routes::memory::memory_search))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 
