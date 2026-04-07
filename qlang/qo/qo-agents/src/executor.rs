@@ -1,9 +1,16 @@
 use crate::{
     agent::AgentRole,
-    goal::{Goal, GoalStatus, SubTask},
+    goal::{ExecutionGraph, Goal, GoalStatus, GraphEdge, GraphNode, SubTask},
     llm_node,
 };
 use qo_llm::LlmRouter;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 /// Execute a goal: CEO decomposes it, then each subtask is executed by the assigned agent.
 pub async fn execute_goal(
@@ -12,14 +19,121 @@ pub async fn execute_goal(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
 
-    decompose_goal(llm, goal).await?;
+    // Build initial graph nodes
+    let mut nodes: Vec<GraphNode> = vec![
+        GraphNode {
+            id: "input".to_string(),
+            label: format!("Ziel: {}", &goal.description.chars().take(40).collect::<String>()),
+            node_type: "input".to_string(),
+            agent: None,
+            status: "completed".to_string(),
+            duration_ms: None,
+        },
+        GraphNode {
+            id: "ceo_decompose".to_string(),
+            label: "CEO: Dekomposition".to_string(),
+            node_type: "llm".to_string(),
+            agent: Some("CEO".to_string()),
+            status: "pending".to_string(),
+            duration_ms: None,
+        },
+    ];
+    let mut edges: Vec<GraphEdge> = vec![
+        GraphEdge { from: "input".to_string(), to: "ceo_decompose".to_string(), data_type: "goal".to_string() },
+    ];
 
-    let subtask_count = goal.subtasks.len();
-    for i in 0..subtask_count {
-        let _ = execute_subtask(llm, goal, i).await;
+    let t0 = now_ms();
+    decompose_goal(llm, goal).await?;
+    let decompose_ms = now_ms() - t0;
+
+    // Mark decompose node done
+    if let Some(n) = nodes.iter_mut().find(|n| n.id == "ceo_decompose") {
+        n.status = "completed".to_string();
+        n.duration_ms = Some(decompose_ms);
     }
 
+    // Add subtask nodes
+    let subtask_count = goal.subtasks.len();
+    for i in 0..subtask_count {
+        let agent_name = goal.subtasks[i].assigned_to.name().to_string();
+        let desc = goal.subtasks[i].description.chars().take(40).collect::<String>();
+        let node_id = format!("subtask_{}", i);
+        nodes.push(GraphNode {
+            id: node_id.clone(),
+            label: format!("{}: {}", agent_name, desc),
+            node_type: "llm".to_string(),
+            agent: Some(agent_name),
+            status: "pending".to_string(),
+            duration_ms: None,
+        });
+        edges.push(GraphEdge {
+            from: "ceo_decompose".to_string(),
+            to: node_id,
+            data_type: "subtask".to_string(),
+        });
+    }
+
+    // CEO summary node
+    nodes.push(GraphNode {
+        id: "ceo_summary".to_string(),
+        label: "CEO: Zusammenfassung".to_string(),
+        node_type: "llm".to_string(),
+        agent: Some("CEO".to_string()),
+        status: "pending".to_string(),
+        duration_ms: None,
+    });
+    nodes.push(GraphNode {
+        id: "output".to_string(),
+        label: "Ergebnis".to_string(),
+        node_type: "output".to_string(),
+        agent: None,
+        status: "pending".to_string(),
+        duration_ms: None,
+    });
+    edges.push(GraphEdge {
+        from: "ceo_summary".to_string(),
+        to: "output".to_string(),
+        data_type: "result".to_string(),
+    });
+
+    // Execute subtasks
+    for i in 0..subtask_count {
+        let t_sub = now_ms();
+        let _ = execute_subtask(llm, goal, i).await;
+        let sub_ms = now_ms() - t_sub;
+        let node_id = format!("subtask_{}", i);
+        let sub_status = goal.subtasks[i].status;
+        if let Some(n) = nodes.iter_mut().find(|n| n.id == node_id) {
+            n.status = match sub_status {
+                GoalStatus::Completed => "completed".to_string(),
+                GoalStatus::Failed => "failed".to_string(),
+                GoalStatus::InProgress => "in-progress".to_string(),
+                GoalStatus::Pending => "pending".to_string(),
+            };
+            n.duration_ms = Some(sub_ms);
+        }
+        // Add edge from subtask to ceo_summary
+        edges.push(GraphEdge {
+            from: node_id,
+            to: "ceo_summary".to_string(),
+            data_type: "result".to_string(),
+        });
+    }
+
+    let t_sum = now_ms();
     summarize_goal(llm, goal).await?;
+    let sum_ms = now_ms() - t_sum;
+
+    // Mark summary and output done
+    if let Some(n) = nodes.iter_mut().find(|n| n.id == "ceo_summary") {
+        n.status = "completed".to_string();
+        n.duration_ms = Some(sum_ms);
+    }
+    if let Some(n) = nodes.iter_mut().find(|n| n.id == "output") {
+        n.status = "completed".to_string();
+    }
+
+    goal.execution_graph = Some(ExecutionGraph { nodes, edges });
 
     Ok(())
 }

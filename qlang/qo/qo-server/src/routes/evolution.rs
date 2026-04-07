@@ -51,9 +51,16 @@ pub async fn approve_proposal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u64>,
 ) -> Result<Json<ApproveRejectResponse>, (StatusCode, String)> {
-    let mut engine = state.proposals.lock().await;
-    let success = engine.approve(id);
+    let (success, proposal_title) = {
+        let mut engine = state.proposals.lock().await;
+        let title = engine.all().iter().find(|p| p.id == id).map(|p| p.title.clone()).unwrap_or_default();
+        let success = engine.approve(id);
+        (success, title)
+    };
     if success {
+        if let Err(e) = state.store.log_action("proposal_approved", &proposal_title, &format!("id={}", id)) {
+            tracing::warn!("failed to log proposal_approved action: {e}");
+        }
         Ok(Json(ApproveRejectResponse { success, id }))
     } else {
         Err((StatusCode::NOT_FOUND, format!("Proposal {} not found", id)))
@@ -65,9 +72,16 @@ pub async fn reject_proposal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u64>,
 ) -> Result<Json<ApproveRejectResponse>, (StatusCode, String)> {
-    let mut engine = state.proposals.lock().await;
-    let success = engine.reject(id);
+    let (success, proposal_title) = {
+        let mut engine = state.proposals.lock().await;
+        let title = engine.all().iter().find(|p| p.id == id).map(|p| p.title.clone()).unwrap_or_default();
+        let success = engine.reject(id);
+        (success, title)
+    };
     if success {
+        if let Err(e) = state.store.log_action("proposal_rejected", &proposal_title, &format!("id={}", id)) {
+            tracing::warn!("failed to log proposal_rejected action: {e}");
+        }
         Ok(Json(ApproveRejectResponse { success, id }))
     } else {
         Err((StatusCode::NOT_FOUND, format!("Proposal {} not found", id)))
@@ -147,6 +161,15 @@ pub async fn analyze(
             .cloned()
             .collect()
     };
+
+    let details = format!(
+        "{} Muster erkannt, {} Vorschläge generiert",
+        detected_pattern_names.len(),
+        new_proposals.len()
+    );
+    if let Err(e) = state.store.log_action("evolution_analyzed", "Systemanalyse durchgeführt", &details) {
+        tracing::warn!("failed to log evolution_analyzed action: {e}");
+    }
 
     Ok(Json(AnalyzeResponse {
         patterns_detected: detected_patterns,

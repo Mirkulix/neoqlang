@@ -4,6 +4,7 @@ import ConsciousnessView from './ConsciousnessView'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
 import EvolutionView from './EvolutionView'
+import HistorieView from './HistorieView'
 import ProviderView from './ProviderView'
 import ActivityFeed from './ActivityFeed'
 
@@ -15,7 +16,7 @@ const globalStyles = `
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 `
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'historie'
 
 const tabs: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
@@ -24,6 +25,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'consciousness', label: 'Bewusstsein' },
   { id: 'provider', label: 'Provider' },
   { id: 'evolution', label: 'Evolution' },
+  { id: 'historie', label: 'Historie' },
 ]
 
 // Height of the bottom activity feed panel (as a percentage of viewport)
@@ -59,6 +61,7 @@ export default function App() {
       case 'consciousness': return <ConsciousnessView />
       case 'provider':     return <ProviderView />
       case 'evolution':    return <EvolutionView />
+      case 'historie':     return <HistorieView />
     }
   }
 

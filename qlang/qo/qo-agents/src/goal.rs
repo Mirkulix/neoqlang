@@ -18,6 +18,29 @@ pub struct SubTask {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub label: String,
+    pub node_type: String,
+    pub agent: Option<String>,
+    pub status: String,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    pub data_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionGraph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Goal {
     pub id: u64,
     pub description: String,
@@ -25,6 +48,7 @@ pub struct Goal {
     pub subtasks: Vec<SubTask>,
     pub result: Option<String>,
     pub created_at: u64,
+    pub execution_graph: Option<ExecutionGraph>,
 }
 
 impl Goal {
@@ -36,6 +60,7 @@ impl Goal {
             subtasks: Vec::new(),
             result: None,
             created_at: now_secs(),
+            execution_graph: None,
         }
     }
 }

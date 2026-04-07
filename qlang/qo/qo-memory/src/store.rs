@@ -3,6 +3,7 @@ use std::path::Path;
 
 const CHAT_TABLE: TableDefinition<u64, &str> = TableDefinition::new("chat");
 const KV_TABLE: TableDefinition<&str, &str> = TableDefinition::new("kv");
+const HISTORY_TABLE: TableDefinition<u64, &str> = TableDefinition::new("action_history");
 
 pub struct Store {
     db: Database,
@@ -16,9 +17,57 @@ impl Store {
         {
             write_txn.open_table(CHAT_TABLE)?;
             write_txn.open_table(KV_TABLE)?;
+            write_txn.open_table(HISTORY_TABLE)?;
         }
         write_txn.commit()?;
         Ok(Self { db })
+    }
+
+    pub fn log_action(
+        &self,
+        action_type: &str,
+        description: &str,
+        details: &str,
+    ) -> Result<(), redb::Error> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let entry = format!(
+            r#"{{"id":{},"timestamp":{},"action_type":"{}","description":"{}","details":"{}"}}"#,
+            id,
+            timestamp,
+            action_type,
+            description.replace('"', "\\\"").replace('\n', "\\n"),
+            details.replace('"', "\\\"").replace('\n', "\\n"),
+        );
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(HISTORY_TABLE)?;
+            table.insert(id, entry.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_history(&self, limit: usize) -> Result<Vec<(u64, String)>, redb::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(HISTORY_TABLE)?;
+        let mut results = Vec::new();
+        // Collect all, then take last N (most recent = highest id)
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            results.push((k.value(), v.value().to_owned()));
+        }
+        // Return last `limit` entries (most recent)
+        let start = if results.len() > limit { results.len() - limit } else { 0 };
+        let mut slice = results[start..].to_vec();
+        slice.reverse();
+        Ok(slice)
     }
 
     pub fn store_chat(&self, id: u64, json: &str) -> Result<(), redb::Error> {

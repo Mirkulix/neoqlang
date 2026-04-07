@@ -96,6 +96,16 @@ pub async fn chat(
         tracing::warn!("failed to store chat in redb: {e}");
     }
 
+    // Log action history
+    let response_short = if response.len() > 100 {
+        format!("{}...", &response[..100])
+    } else {
+        response.clone()
+    };
+    if let Err(e) = state.store.log_action("chat", &req.message, &response_short) {
+        tracing::warn!("failed to log chat action: {e}");
+    }
+
     // Update consciousness and log to Obsidian
     {
         let mut cs = state.consciousness.lock().await;

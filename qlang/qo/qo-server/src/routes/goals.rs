@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use qo_agents::Goal;
+use qo_agents::{ExecutionGraph, Goal};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -46,6 +46,11 @@ pub async fn create_goal(
             .cloned()
             .ok_or_else(|| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Goal not found after creation".to_string()))?
     };
+
+    // Log action history
+    if let Err(e) = state.store.log_action("goal_created", &req.description, "") {
+        tracing::warn!("failed to log goal_created action: {e}");
+    }
 
     // Emit activity: goal created
     state.stream.publish_activity(
@@ -161,13 +166,16 @@ pub async fn execute_goal_background(
             let short = if summary.len() > 80 {
                 format!("{}...", &summary[..80])
             } else {
-                summary
+                summary.clone()
             };
             state.stream.publish_activity(
                 format!("Ziel abgeschlossen: {}", short),
                 Some("CEO".to_string()),
                 "success",
             );
+            if let Err(e) = state.store.log_action("goal_completed", &description, &short) {
+                tracing::warn!("failed to log goal_completed action: {e}");
+            }
         }
         Err(e) => {
             state.stream.publish_activity(
@@ -176,6 +184,9 @@ pub async fn execute_goal_background(
                 "error",
             );
             tracing::warn!("Goal {} summary failed: {}", goal_id, e);
+            if let Err(log_err) = state.store.log_action("goal_failed", &description, &e.to_string()) {
+                tracing::warn!("failed to log goal_failed action: {log_err}");
+            }
         }
     }
 
@@ -207,4 +218,24 @@ pub async fn get_goal(
         )
     })?;
     Ok(Json(goal.clone()))
+}
+
+pub async fn get_goal_graph(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<u64>,
+) -> Result<Json<ExecutionGraph>, (axum::http::StatusCode, String)> {
+    let registry = state.agents.lock().await;
+    let goal = registry.get_goal(id).ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            format!("Goal {} not found", id),
+        )
+    })?;
+    let graph = goal.execution_graph.clone().ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            "No execution graph available yet".to_string(),
+        )
+    })?;
+    Ok(Json(graph))
 }

@@ -14,6 +14,26 @@ interface Subtask {
   result?: string
 }
 
+interface GraphNode {
+  id: string
+  label: string
+  node_type: string
+  agent?: string
+  status: string
+  duration_ms?: number
+}
+
+interface GraphEdge {
+  from: string
+  to: string
+  data_type: string
+}
+
+interface ExecutionGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
 interface Goal {
   id: string
   description: string
@@ -21,6 +41,7 @@ interface Goal {
   subtasks: Subtask[]
   result?: string
   created_at: string
+  execution_graph?: ExecutionGraph
 }
 
 const statusColor: Record<string, string> = {
@@ -64,6 +85,78 @@ function StatusBadge({ status }: { status: string }) {
       )}
       {statusLabel[status] ?? status}
     </span>
+  )
+}
+
+const nodeStatusColor: Record<string, string> = {
+  completed:   '#4caf50',
+  failed:      '#f44336',
+  'in-progress': '#1f6feb',
+  pending:     '#484f58',
+}
+
+const nodeTypeStyle: Record<string, React.CSSProperties> = {
+  input:         { borderStyle: 'dashed' },
+  output:        { borderStyle: 'dashed' },
+  llm:           { borderStyle: 'solid' },
+  deterministic: { borderStyle: 'solid' },
+}
+
+function ExecutionGraphView({ graph }: { graph: ExecutionGraph }) {
+  // Build ordered layers: input → ceo_decompose → subtasks → ceo_summary → output
+  const orderedIds = ['input', 'ceo_decompose', ...graph.nodes.filter(n => n.id.startsWith('subtask_')).map(n => n.id), 'ceo_summary', 'output']
+  const orderedNodes = orderedIds
+    .map(id => graph.nodes.find(n => n.id === id))
+    .filter(Boolean) as GraphNode[]
+
+  return (
+    <div style={{
+      marginTop: '12px',
+      borderTop: '1px solid #21262d',
+      paddingTop: '12px',
+    }}>
+      <div style={{ fontSize: '11px', color: '#484f58', marginBottom: '8px', fontWeight: 600 }}>
+        QLANG Ausführungsgraph
+      </div>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '4px',
+        overflowX: 'auto',
+        paddingBottom: '4px',
+      }}>
+        {orderedNodes.map((node, i) => {
+          const color = nodeStatusColor[node.status] ?? '#484f58'
+          const typeStyle = nodeTypeStyle[node.node_type] ?? {}
+          return (
+            <React.Fragment key={node.id}>
+              <div style={{
+                background: color + '18',
+                border: `1px ${typeStyle.borderStyle ?? 'solid'} ${color}`,
+                borderRadius: '6px',
+                padding: '4px 8px',
+                minWidth: '80px',
+                maxWidth: '140px',
+                textAlign: 'center',
+              }}>
+                <div style={{ fontSize: '10px', color: color, fontWeight: 600, wordBreak: 'break-word' }}>
+                  {node.label.length > 30 ? node.label.slice(0, 30) + '…' : node.label}
+                </div>
+                {node.duration_ms != null && (
+                  <div style={{ fontSize: '9px', color: '#484f58', marginTop: '2px' }}>
+                    {node.duration_ms < 1000 ? `${node.duration_ms}ms` : `${(node.duration_ms / 1000).toFixed(1)}s`}
+                  </div>
+                )}
+              </div>
+              {i < orderedNodes.length - 1 && (
+                <span style={{ color: '#30363d', fontSize: '14px', flexShrink: 0 }}>&rarr;</span>
+              )}
+            </React.Fragment>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -147,6 +240,10 @@ function GoalCard({ goal }: { goal: Goal }) {
         }}>
           {goal.result}
         </div>
+      )}
+
+      {expanded && goal.execution_graph && (
+        <ExecutionGraphView graph={goal.execution_graph} />
       )}
     </div>
   )
