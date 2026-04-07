@@ -7,3 +7,4 @@ pub mod graphs;
 pub mod health;
 pub mod history;
 pub mod providers;
+pub mod simulation;

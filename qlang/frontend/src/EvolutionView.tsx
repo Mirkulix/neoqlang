@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Dna, Play, Check, X, AlertTriangle, TrendingUp, FlaskConical } from 'lucide-react'
+import { Dna, Play, Check, X, AlertTriangle, TrendingUp, FlaskConical, Star } from 'lucide-react'
 
 interface EvolutionState {
   strategy_weights?: Record<string, number>
@@ -24,6 +24,26 @@ interface Proposal {
   proposed_at?: string
 }
 
+interface StrategyScore {
+  strategy_index: number
+  name: string
+  avg_score: number
+  success_rate: number
+  avg_value_alignment: number
+  avg_duration_ms: number
+  avg_cost: number
+  top_risks: string[]
+  top_benefits: string[]
+}
+
+interface SimulationPrediction {
+  scenario_id: number
+  recommended_strategy: number
+  recommended_name: string
+  confidence: number
+  strategy_scores: StrategyScore[]
+}
+
 const severityBadge: Record<string, string> = {
   low: 'badge-info',
   medium: 'badge-pending',
@@ -37,6 +57,13 @@ export default function EvolutionView() {
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Simulation state
+  const [simDescription, setSimDescription] = useState('')
+  const [simCount, setSimCount] = useState(20)
+  const [simulating, setSimulating] = useState(false)
+  const [simError, setSimError] = useState<string | null>(null)
+  const [simResult, setSimResult] = useState<SimulationPrediction | null>(null)
 
   const fetchAll = async () => {
     try {
@@ -88,6 +115,27 @@ export default function EvolutionView() {
       await fetch(`/api/evolution/proposals/${id}/${action}`, { method: 'POST' })
       fetchAll()
     } catch {}
+  }
+
+  const handleSimulate = async () => {
+    if (!simDescription.trim()) return
+    setSimulating(true)
+    setSimError(null)
+    setSimResult(null)
+    try {
+      const res = await fetch('/api/simulation/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: simDescription, num_simulations: simCount }),
+      })
+      if (!res.ok) throw new Error('Simulation fehlgeschlagen')
+      const data: SimulationPrediction = await res.json()
+      setSimResult(data)
+    } catch (err) {
+      setSimError((err as Error).message)
+    } finally {
+      setSimulating(false)
+    }
   }
 
   const hasData = evoState?.strategy_weights || patterns.length > 0 || proposals.length > 0
@@ -242,16 +290,139 @@ export default function EvolutionView() {
         </>
       )}
 
-      {/* Simulation Placeholder */}
-      <div className="card-static evo-simulation-section">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+      {/* Simulation Section */}
+      <div className="card-static evo-simulation-section" style={{ marginTop: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
           <FlaskConical size={18} style={{ color: 'var(--accent-info)' }} />
           <h3 className="heading" style={{ fontSize: '13px', margin: 0 }}>Szenario-Simulation</h3>
-          <span className="badge badge-info" style={{ marginLeft: 'auto' }}>Verf&uuml;gbar ab n&auml;chster Version</span>
         </div>
-        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0 }}>
-          Vor der Ausf&uuml;hrung eines Ziels simuliert QO verschiedene Strategien und w&auml;hlt die beste.
-        </p>
+
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+          <input
+            className="input"
+            style={{ flex: 1, fontSize: '13px' }}
+            placeholder="Beschreibe ein Szenario..."
+            value={simDescription}
+            onChange={e => setSimDescription(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSimulate()}
+          />
+          <input
+            type="number"
+            className="input"
+            style={{ width: '80px', fontSize: '13px' }}
+            title="Anzahl Simulationen"
+            min={1}
+            max={200}
+            value={simCount}
+            onChange={e => setSimCount(Number(e.target.value))}
+          />
+          <button
+            className="btn btn-primary"
+            onClick={handleSimulate}
+            disabled={simulating || !simDescription.trim()}
+            style={{ minWidth: '110px' }}
+          >
+            <Play size={15} />
+            {simulating ? 'Simuliere...' : 'Simulieren'}
+          </button>
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+          Anzahl Simulationen: {simCount}
+        </div>
+
+        {simError && (
+          <div style={{ fontSize: '12px', color: 'var(--accent-danger)', marginBottom: '12px' }}>{simError}</div>
+        )}
+
+        {simResult && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {/* Confidence meter */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Konfidenz</span>
+              <div className="progress-track" style={{ flex: 1 }}>
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${Math.round(simResult.confidence * 100)}%`,
+                    background: simResult.confidence > 0.7 ? 'var(--accent-success)' : 'var(--accent-warning)',
+                  }}
+                />
+              </div>
+              <span className="mono" style={{ fontSize: '12px', color: 'var(--accent-primary)', minWidth: '38px', textAlign: 'right' }}>
+                {Math.round(simResult.confidence * 100)}%
+              </span>
+            </div>
+
+            {/* Strategy cards */}
+            {simResult.strategy_scores.map(s => {
+              const isRecommended = s.strategy_index === simResult.recommended_strategy
+              return (
+                <div
+                  key={s.strategy_index}
+                  className="evo-sim-strategy-card"
+                  style={isRecommended ? { borderColor: 'var(--accent-success)', background: 'color-mix(in srgb, var(--accent-success) 6%, var(--bg-primary))' } : {}}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {isRecommended && <Star size={13} style={{ color: 'var(--accent-success)' }} fill="currentColor" />}
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: isRecommended ? 'var(--accent-success)' : undefined }}>
+                        {s.name}
+                      </span>
+                    </div>
+                    {isRecommended && (
+                      <span className="badge badge-completed" style={{ fontSize: '10px' }}>Empfohlen</span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '8px' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                        {Math.round(s.success_rate * 100)}%
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Erfolg</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                        {s.avg_score.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Ø Score</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                        {Math.round(s.avg_value_alignment * 100)}%
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Werte</div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: s.top_risks.length > 0 || s.top_benefits.length > 0 ? '8px' : 0 }}>
+                    <span>{Math.round(s.avg_duration_ms / 1000)}s Dauer</span>
+                    <span>{s.avg_cost === 0 ? 'kostenlos' : `$${s.avg_cost.toFixed(4)}`}</span>
+                  </div>
+
+                  {s.top_benefits.length > 0 && (
+                    <div style={{ marginBottom: '4px' }}>
+                      {s.top_benefits.map((b, i) => (
+                        <div key={i} style={{ fontSize: '11px', color: 'var(--accent-success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Check size={10} /> {b}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {s.top_risks.length > 0 && (
+                    <div>
+                      {s.top_risks.map((r, i) => (
+                        <div key={i} style={{ fontSize: '11px', color: 'var(--accent-danger)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <AlertTriangle size={10} /> {r}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -280,10 +451,14 @@ export default function EvolutionView() {
           flex-direction: column;
         }
         .evo-simulation-section {
-          margin-top: 16px;
           border-color: var(--accent-info);
           border-left: 3px solid var(--accent-info);
-          opacity: 0.8;
+        }
+        .evo-sim-strategy-card {
+          padding: 12px 14px;
+          background: var(--bg-primary);
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border);
         }
       `}</style>
     </div>

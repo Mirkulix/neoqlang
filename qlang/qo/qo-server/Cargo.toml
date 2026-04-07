@@ -10,6 +10,7 @@ qo-evolution = { path = "../qo-evolution" }
 qo-consciousness = { path = "../qo-consciousness" }
 qo-llm = { path = "../qo-llm" }
 qo-memory = { path = "../qo-memory" }
+qo-simulation = { path = "../qo-simulation" }
 qo-values = { path = "../qo-values" }
 axum = { workspace = true }
 tower-http = { workspace = true }
