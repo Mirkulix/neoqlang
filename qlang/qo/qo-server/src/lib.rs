@@ -1,7 +1,7 @@
 pub mod routes;
 
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use qo_agents::AgentRegistry;
@@ -117,6 +117,12 @@ pub fn build_app(
         .route("/api/graphs/{id}", get(routes::graphs::get_graph))
         .route("/api/providers", get(routes::providers::list_providers))
         .route("/api/providers/costs", get(routes::providers::cost_summary))
+        .route("/api/providers/templates", get(routes::providers::list_templates))
+        .route("/api/providers/configured", get(routes::providers::list_configured))
+        .route("/api/providers/add", post(routes::providers::add_provider))
+        .route("/api/providers/test", post(routes::providers::test_provider))
+        .route("/api/providers/{id}/toggle", put(routes::providers::toggle_provider))
+        .route("/api/providers/{id}", delete(routes::providers::delete_provider))
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {

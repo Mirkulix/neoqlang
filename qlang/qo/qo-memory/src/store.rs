@@ -5,6 +5,7 @@ use std::sync::Arc;
 const CHAT_TABLE: TableDefinition<u64, &str> = TableDefinition::new("chat");
 const KV_TABLE: TableDefinition<&str, &str> = TableDefinition::new("kv");
 const HISTORY_TABLE: TableDefinition<u64, &str> = TableDefinition::new("action_history");
+const PROVIDERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("providers");
 
 pub struct Store {
     db: Arc<Database>,
@@ -19,6 +20,7 @@ impl Store {
             write_txn.open_table(CHAT_TABLE)?;
             write_txn.open_table(KV_TABLE)?;
             write_txn.open_table(HISTORY_TABLE)?;
+            write_txn.open_table(PROVIDERS_TABLE)?;
         }
         write_txn.commit()?;
         Ok(Self { db })
@@ -114,6 +116,43 @@ impl Store {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(KV_TABLE)?;
         Ok(table.get(key)?.map(|v| v.value().to_owned()))
+    }
+
+    pub fn save_provider(&self, id: &str, config_json: &str) -> Result<(), redb::Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(PROVIDERS_TABLE)?;
+            table.insert(id, config_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_provider(&self, id: &str) -> Result<Option<String>, redb::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(PROVIDERS_TABLE)?;
+        Ok(table.get(id)?.map(|v| v.value().to_owned()))
+    }
+
+    pub fn list_providers(&self) -> Result<Vec<(String, String)>, redb::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(PROVIDERS_TABLE)?;
+        let mut results = Vec::new();
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            results.push((k.value().to_owned(), v.value().to_owned()));
+        }
+        Ok(results)
+    }
+
+    pub fn delete_provider(&self, id: &str) -> Result<(), redb::Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(PROVIDERS_TABLE)?;
+            table.remove(id)?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 }
 
