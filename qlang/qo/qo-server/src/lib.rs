@@ -97,15 +97,15 @@ pub fn build_app(
             get(routes::consciousness::current_state),
         )
         .route("/api/agents", get(routes::agents::list_agents))
-        .route("/api/agents/:role", get(routes::agents::get_agent))
+        .route("/api/agents/{role}", get(routes::agents::get_agent))
         .route("/api/goals", get(routes::goals::list_goals))
         .route("/api/goals", post(routes::goals::create_goal))
-        .route("/api/goals/:id", get(routes::goals::get_goal))
+        .route("/api/goals/{id}", get(routes::goals::get_goal))
         .route("/api/evolution/state", get(routes::evolution::quantum_state))
         .route("/api/evolution/patterns", get(routes::evolution::list_patterns))
         .route("/api/evolution/proposals", get(routes::evolution::list_proposals))
-        .route("/api/evolution/proposals/:id/approve", post(routes::evolution::approve_proposal))
-        .route("/api/evolution/proposals/:id/reject", post(routes::evolution::reject_proposal))
+        .route("/api/evolution/proposals/{id}/approve", post(routes::evolution::approve_proposal))
+        .route("/api/evolution/proposals/{id}/reject", post(routes::evolution::reject_proposal))
         .route("/api/evolution/analyze", post(routes::evolution::analyze))
         .with_state(state.clone());
 
