@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use qo_consciousness::StateEvent;
+use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -68,11 +69,22 @@ pub async fn chat(
         ("user".to_string(), req.message.clone()),
     ];
 
+    let llm_start = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     let llm_response = state
         .llm
         .chat(messages)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let llm_duration_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+        - llm_start;
 
     let response = match goal_prefix {
         Some(prefix) => format!("{}{}", prefix, llm_response),
@@ -94,6 +106,19 @@ pub async fn chat(
 
     if let Err(e) = state.store.store_chat(id, &entry_str) {
         tracing::warn!("failed to store chat in redb: {e}");
+    }
+
+    // Build and store QLANG graph for this chat interaction
+    {
+        let graph = graph_builders::build_chat_graph(
+            &req.message,
+            &response,
+            "groq",
+            llm_duration_ms,
+        );
+        if let Err(e) = state.graph_store.store(&graph) {
+            tracing::warn!("failed to store chat graph: {e}");
+        }
     }
 
     // Log action history

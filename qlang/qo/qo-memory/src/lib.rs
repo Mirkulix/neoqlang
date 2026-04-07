@@ -1,8 +1,11 @@
 pub mod embeddings;
+pub mod graph_builders;
+pub mod graph_store;
 pub mod hnsw;
 pub mod obsidian;
 pub mod store;
 
+pub use graph_store::{GraphStore, GraphType, StoredGraph};
 pub use hnsw::VectorStore;
 pub use obsidian::ObsidianBridge;
 pub use store::Store;

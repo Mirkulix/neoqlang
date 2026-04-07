@@ -3,8 +3,10 @@ use axum::{
     Json,
 };
 use qo_agents::{ExecutionGraph, Goal};
+use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
 
@@ -77,6 +79,11 @@ pub async fn execute_goal_background(
     goal_id: u64,
     description: String,
 ) {
+    let goal_start_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     state.stream.publish_activity(
         "CEO analysiert Ziel...",
         Some("CEO".to_string()),
@@ -118,7 +125,8 @@ pub async fn execute_goal_background(
         }
     };
 
-    // Execute subtasks one by one with activity events
+    // Execute subtasks one by one with activity events, tracking results for graph
+    let mut subtask_results: Vec<(String, String, bool, u64)> = Vec::new();
     for (i, (agent_name, task_desc)) in subtasks.iter().enumerate() {
         state.stream.publish_activity(
             format!("{} arbeitet an: {}", agent_name, task_desc),
@@ -126,10 +134,21 @@ pub async fn execute_goal_background(
             "progress",
         );
 
+        let subtask_start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
         let exec_result = {
             let mut registry = state.agents.lock().await;
             registry.execute_goal_subtask(goal_id, i, &state.llm).await
         };
+
+        let subtask_dur = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+            - subtask_start;
 
         match exec_result {
             Ok(_) => {
@@ -138,6 +157,7 @@ pub async fn execute_goal_background(
                     Some(agent_name.clone()),
                     "success",
                 );
+                subtask_results.push((agent_name.clone(), task_desc.clone(), true, subtask_dur));
             }
             Err(e) => {
                 state.stream.publish_activity(
@@ -145,6 +165,7 @@ pub async fn execute_goal_background(
                     Some(agent_name.clone()),
                     "error",
                 );
+                subtask_results.push((agent_name.clone(), task_desc.clone(), false, subtask_dur));
             }
         }
     }
@@ -194,6 +215,19 @@ pub async fn execute_goal_background(
     {
         let mut registry = state.agents.lock().await;
         registry.finalize_goal(goal_id);
+    }
+
+    // Build and store QLANG graph for this goal execution
+    {
+        let total_duration_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+            - goal_start_ms;
+        let graph = graph_builders::build_goal_graph(&description, &subtask_results, total_duration_ms);
+        if let Err(e) = state.graph_store.store(&graph) {
+            tracing::warn!("failed to store goal graph: {e}");
+        }
     }
 
     state.stream.publish_activity(

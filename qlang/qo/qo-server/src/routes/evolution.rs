@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use qo_evolution::{Pattern, Proposal, QuantumSummary, SystemStats};
+use qo_memory::graph_builders;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -169,6 +170,17 @@ pub async fn analyze(
     );
     if let Err(e) = state.store.log_action("evolution_analyzed", "Systemanalyse durchgeführt", &details) {
         tracing::warn!("failed to log evolution_analyzed action: {e}");
+    }
+
+    // Build and store QLANG graph for this evolution cycle
+    {
+        let graph = graph_builders::build_evolution_graph(
+            detected_pattern_names.len(),
+            new_proposals.len(),
+        );
+        if let Err(e) = state.graph_store.store(&graph) {
+            tracing::warn!("failed to store evolution graph: {e}");
+        }
     }
 
     Ok(Json(AnalyzeResponse {

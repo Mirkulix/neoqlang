@@ -1,17 +1,18 @@
 use redb::{Database, ReadableTable, TableDefinition};
 use std::path::Path;
+use std::sync::Arc;
 
 const CHAT_TABLE: TableDefinition<u64, &str> = TableDefinition::new("chat");
 const KV_TABLE: TableDefinition<&str, &str> = TableDefinition::new("kv");
 const HISTORY_TABLE: TableDefinition<u64, &str> = TableDefinition::new("action_history");
 
 pub struct Store {
-    db: Database,
+    db: Arc<Database>,
 }
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, redb::Error> {
-        let db = Database::create(path)?;
+        let db = Arc::new(Database::create(path)?);
         // Ensure tables exist
         let write_txn = db.begin_write()?;
         {
@@ -21,6 +22,11 @@ impl Store {
         }
         write_txn.commit()?;
         Ok(Self { db })
+    }
+
+    /// Expose the underlying database for sharing with other stores (e.g. GraphStore)
+    pub fn db(&self) -> Arc<Database> {
+        self.db.clone()
     }
 
     pub fn log_action(

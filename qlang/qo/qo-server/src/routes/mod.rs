@@ -3,6 +3,7 @@ pub mod chat;
 pub mod consciousness;
 pub mod evolution;
 pub mod goals;
+pub mod graphs;
 pub mod health;
 pub mod history;
 pub mod providers;

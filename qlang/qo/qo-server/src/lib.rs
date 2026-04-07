@@ -8,7 +8,7 @@ use qo_agents::AgentRegistry;
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_evolution::{PatternDetector, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
-use qo_memory::{ObsidianBridge, Store};
+use qo_memory::{GraphStore, ObsidianBridge, Store};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -17,6 +17,7 @@ use tower_http::services::ServeDir;
 pub struct AppState {
     pub llm: LlmRouter,
     pub store: Store,
+    pub graph_store: GraphStore,
     pub consciousness: Mutex<ConsciousnessState>,
     pub stream: ConsciousnessStream,
     pub obsidian: ObsidianBridge,
@@ -57,6 +58,7 @@ pub fn build_app(
     std::fs::create_dir_all(&config.data_dir)?;
 
     let store = Store::open(&db_path)?;
+    let graph_store = GraphStore::new(store.db())?;
     let llm = LlmRouter::new(config.groq_api_key, config.cloud_config);
     let obsidian = ObsidianBridge::new(config.obsidian_vault);
     let stream = ConsciousnessStream::new(64);
@@ -75,6 +77,7 @@ pub fn build_app(
     let state = Arc::new(AppState {
         llm,
         store,
+        graph_store,
         consciousness,
         stream,
         obsidian,
@@ -109,6 +112,9 @@ pub fn build_app(
         .route("/api/evolution/analyze", post(routes::evolution::analyze))
         .route("/api/history", get(routes::history::get_history))
         .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))
+        .route("/api/graphs", get(routes::graphs::list_graphs))
+        .route("/api/graphs/stats", get(routes::graphs::graph_stats))
+        .route("/api/graphs/{id}", get(routes::graphs::get_graph))
         .route("/api/providers", get(routes::providers::list_providers))
         .route("/api/providers/costs", get(routes::providers::cost_summary))
         .with_state(state.clone());
