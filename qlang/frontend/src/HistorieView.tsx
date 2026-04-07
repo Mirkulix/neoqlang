@@ -40,7 +40,7 @@ function relativeTime(timestamp: number): string {
   return `vor ${Math.floor(diff / 86400)} Tagen`
 }
 
-function HistoryItem({ entry }: { entry: HistoryEntry }) {
+function HistoryItem({ entry, onNavigate }: { entry: HistoryEntry; onNavigate?: (tab: string) => void }) {
   const [expanded, setExpanded] = useState(false)
   const cfg = typeConfig[entry.action_type] ?? {
     icon: ClipboardList,
@@ -79,8 +79,8 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
             {relativeTime(entry.timestamp)}
           </span>
         </div>
-        {entry.details && (
-          <div style={{ marginTop: '6px' }}>
+        <div style={{ marginTop: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {entry.details && (
             <button
               className="btn btn-ghost"
               style={{ minHeight: '28px', padding: '2px 8px', fontSize: '10px' }}
@@ -89,11 +89,31 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {expanded ? 'Ausblenden' : 'Details'}
             </button>
-            {expanded && (
-              <div className="timeline-details">
-                {entry.details}
-              </div>
-            )}
+          )}
+          {entry.action_type === 'chat' && onNavigate && (
+            <button
+              className="btn btn-ghost"
+              style={{ minHeight: '28px', padding: '2px 8px', fontSize: '10px', color: 'var(--accent-info)' }}
+              onClick={() => onNavigate('chat')}
+            >
+              <MessageSquare size={12} style={{ marginRight: '4px' }} />
+              Zum Chat
+            </button>
+          )}
+          {(entry.action_type === 'goal_created' || entry.action_type === 'goal_completed' || entry.action_type === 'goal_failed') && onNavigate && (
+            <button
+              className="btn btn-ghost"
+              style={{ minHeight: '28px', padding: '2px 8px', fontSize: '10px', color: 'var(--accent-warning)' }}
+              onClick={() => onNavigate('goals')}
+            >
+              <Target size={12} style={{ marginRight: '4px' }} />
+              Zu Zielen
+            </button>
+          )}
+        </div>
+        {expanded && entry.details && (
+          <div className="timeline-details" style={{ marginTop: '6px' }}>
+            {entry.details}
           </div>
         )}
       </div>
@@ -101,7 +121,7 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
   )
 }
 
-export default function HistorieView() {
+export default function HistorieView({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -143,7 +163,7 @@ export default function HistorieView() {
       ) : (
         <div className="timeline">
           {entries.map(entry => (
-            <HistoryItem key={entry.id} entry={entry} />
+            <HistoryItem key={entry.id} entry={entry} onNavigate={onNavigate} />
           ))}
         </div>
       )}

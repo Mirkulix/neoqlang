@@ -42,16 +42,21 @@ export default function ChatView() {
   useEffect(() => {
     fetch('/api/chat/history')
       .then(r => r.json())
-      .then((history: ChatEntry[]) => {
-        if (Array.isArray(history)) {
-          setMessages(history.map((entry, i) => ({
-            id: entry.id ?? String(i),
-            role: entry.role === 'user' ? 'user' : 'assistant',
-            content: entry.content,
-            tier: entry.tier,
-            timestamp: entry.timestamp,
-          })))
+      .then((history: any[]) => {
+        if (!Array.isArray(history)) return
+        const loaded: ChatMessage[] = []
+        for (const entry of history) {
+          // Format from redb: {id, user, assistant, response, ...}
+          const userText = entry.user ?? entry.content
+          const assistantText = entry.assistant ?? entry.response
+          if (userText) {
+            loaded.push({ id: `${entry.id ?? 0}-user`, role: 'user', content: userText })
+          }
+          if (assistantText) {
+            loaded.push({ id: `${entry.id ?? 0}-assistant`, role: 'assistant', content: assistantText, tier: entry.tier })
+          }
         }
+        setMessages(loaded)
       })
       .catch(() => {})
   }, [])

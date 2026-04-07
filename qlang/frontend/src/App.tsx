@@ -29,7 +29,7 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'historie', label: 'Historie', icon: Clock },
 ]
 
-function renderView(tab: Tab) {
+function renderView(tab: Tab, onNavigate: (tab: string) => void) {
   switch (tab) {
     case 'chat': return <ChatView />
     case 'goals': return <GoalsView />
@@ -37,7 +37,7 @@ function renderView(tab: Tab) {
     case 'consciousness': return <ConsciousnessView />
     case 'provider': return <ProviderView />
     case 'evolution': return <EvolutionView />
-    case 'historie': return <HistorieView />
+    case 'historie': return <HistorieView onNavigate={onNavigate} />
   }
 }
 
@@ -70,7 +70,7 @@ export default function App() {
 
       <div className="main-area">
         <div className="main-content">
-          {renderView(activeTab)}
+          {renderView(activeTab, (t) => setActiveTab(t as Tab))}
         </div>
         <div className="activity-panel">
           <ActivityFeed />
