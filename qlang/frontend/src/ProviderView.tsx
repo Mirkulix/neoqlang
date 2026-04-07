@@ -705,20 +705,11 @@ export default function ProviderView() {
         ) : null}
       </div>
 
-      {/* Active providers (runtime stats) */}
-      {providers && (
-        <div className="grid-3" style={{ marginBottom: '24px' }}>
-          {providers.providers.map(p => (
-            <ProviderCard key={p.name} provider={p} maxLatency={maxLatency} />
-          ))}
-        </div>
-      )}
-
-      {/* Configured providers section */}
+      {/* All providers — runtime + configured, unified view */}
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <h3 className="heading" style={{ fontSize: '14px', margin: 0 }}>
-            Konfigurierte Provider ({configured.length})
+            LLM Provider ({(providers?.providers.length ?? 0) + configured.length})
           </h3>
           <button
             className="btn-primary"
@@ -730,22 +721,89 @@ export default function ProviderView() {
           </button>
         </div>
 
-        {configured.length > 0 && (
-          <div className="grid-3" style={{ marginBottom: showAdd ? '0' : '0' }}>
-            {configured.map(p => (
-              <ConfiguredCard
-                key={p.id}
-                provider={p}
-                onToggle={handleToggle}
-                onDelete={handleDelete}
-                onTest={() => {}}
-                onUpdate={fetchData}
-              />
-            ))}
-          </div>
-        )}
+        <div className="grid-3" style={{ marginBottom: '0' }}>
+          {/* Runtime providers as manageable cards */}
+          {providers?.providers.map(p => {
+            // Convert runtime stats to ConfiguredProvider format
+            const asConfigured: ConfiguredProvider = {
+              id: p.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+              name: p.name,
+              provider_type: p.name as any,
+              model: p.model || '—',
+              base_url: null,
+              enabled: p.status === 'active',
+              tier: p.name === 'Groq' ? 2 : p.name.includes('IGQK') ? 1 : 3,
+              cost_per_1k_tokens: 0,
+            }
+            return (
+              <div key={p.name} className="card provider-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div className="provider-icon">
+                      <Server size={20} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        {p.model || '—'}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {p.cost_usd === 0 && p.requests > 0 && (
+                      <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)', color: 'var(--accent-success)', fontWeight: 600 }}>
+                        Kostenlos
+                      </span>
+                    )}
+                    <span className={`badge ${p.status === 'active' ? 'badge-idle' : p.status === 'coming_soon' ? 'badge-pending' : 'badge-info'}`}>
+                      <span className="badge-dot" />
+                      {p.status === 'active' ? 'Aktiv' : p.status === 'coming_soon' ? 'Bald' : 'Inaktiv'}
+                    </span>
+                  </div>
+                </div>
 
-        {configured.length === 0 && !showAdd && (
+                <div className="provider-stats-grid">
+                  <div>
+                    <div className="label">Requests</div>
+                    <div className="stat-value" style={{ fontSize: '18px', color: 'var(--accent-primary)' }}>{p.requests}</div>
+                  </div>
+                  <div>
+                    <div className="label">Tokens (est.)</div>
+                    <div className="stat-value" style={{ fontSize: '18px', color: 'var(--accent-primary)' }}>{fmtTokens(p.total_tokens_estimate)}</div>
+                  </div>
+                  <div>
+                    <div className="label">Kosten</div>
+                    <div className="stat-value mono" style={{ fontSize: '18px' }}>{fmtCost(p.cost_usd)}</div>
+                  </div>
+                  <div>
+                    <div className="label">Latenz (avg)</div>
+                    <div className="stat-value mono" style={{ fontSize: '18px' }}>{p.avg_latency_ms > 0 ? `${p.avg_latency_ms}ms` : '—'}</div>
+                  </div>
+                </div>
+
+                {p.status === 'active' && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    Über Umgebungsvariable konfiguriert
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {/* User-configured providers with full management */}
+          {configured.map(p => (
+            <ConfiguredCard
+              key={p.id}
+              provider={p}
+              onToggle={handleToggle}
+              onDelete={handleDelete}
+              onTest={() => {}}
+              onUpdate={fetchData}
+            />
+          ))}
+        </div>
+
+        {(providers?.providers.length ?? 0) + configured.length === 0 && !showAdd && (
           <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '12px 0' }}>
             Noch keine Provider konfiguriert. Klicke "Provider hinzufügen" um zu starten.
           </div>
