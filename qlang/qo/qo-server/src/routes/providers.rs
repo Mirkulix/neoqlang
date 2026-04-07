@@ -88,17 +88,59 @@ pub struct ConfiguredProviderResponse {
     pub enabled: bool,
     pub tier: u8,
     pub cost_per_1k_tokens: f64,
+    #[serde(default)]
+    pub requests: u64,
+    #[serde(default)]
+    pub tokens: u64,
+    #[serde(default)]
+    pub cost_usd: f64,
+    #[serde(default)]
+    pub avg_latency_ms: u64,
+    #[serde(default)]
+    pub source: String, // "env" or "db"
 }
 
 pub async fn list_configured(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ConfiguredProviderResponse>>, StatusCode> {
+    let mut result = Vec::new();
+
+    // Include runtime providers (from env vars) as editable entries
+    let runtime_stats = state.llm.provider_stats();
+    for rs in &runtime_stats {
+        // Skip "coming soon" providers
+        if rs.status == "coming_soon" {
+            continue;
+        }
+        // Check if this runtime provider has been overridden in redb
+        let id = rs.name.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+        let has_override = state.store.get_provider(&id).ok().flatten().is_some();
+        if has_override {
+            continue; // will be shown from redb below
+        }
+        result.push(ConfiguredProviderResponse {
+            id,
+            name: rs.name.clone(),
+            provider_type: if rs.name == "Groq" { qo_llm::ProviderType::Groq } else { qo_llm::ProviderType::Custom },
+            model: rs.model.clone(),
+            base_url: None,
+            enabled: rs.status == "active",
+            tier: if rs.name == "Groq" { 2 } else { 3 },
+            cost_per_1k_tokens: rs.cost_usd / (rs.total_tokens_estimate.max(1) as f64 / 1000.0),
+            requests: rs.requests,
+            tokens: rs.total_tokens_estimate,
+            cost_usd: rs.cost_usd,
+            avg_latency_ms: rs.avg_latency_ms,
+            source: "env".to_string(),
+        });
+    }
+
+    // User-configured providers from redb
     let providers = state
         .store
         .list_providers()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mut result = Vec::new();
     for (_, json) in providers {
         if let Ok(cfg) = serde_json::from_str::<qo_llm::ProviderConfig>(&json) {
             result.push(ConfiguredProviderResponse {
@@ -110,6 +152,11 @@ pub async fn list_configured(
                 enabled: cfg.enabled,
                 tier: cfg.tier,
                 cost_per_1k_tokens: cfg.cost_per_1k_tokens,
+                requests: 0,
+                tokens: 0,
+                cost_usd: 0.0,
+                avg_latency_ms: 0,
+                source: "db".to_string(),
             });
         }
     }
