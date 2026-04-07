@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Server } from 'lucide-react'
 
 interface ProviderStats {
   name: string
@@ -25,137 +26,101 @@ interface CostSummary {
   savings_vs_all_cloud_usd: number
 }
 
-const statusColor = (status: string): string => {
-  switch (status) {
-    case 'active':      return '#3fb950'
-    case 'inactive':    return '#8b949e'
-    case 'coming_soon': return '#d29922'
-    case 'error':       return '#f85149'
-    default:            return '#8b949e'
-  }
-}
-
-const statusLabel = (status: string): string => {
-  switch (status) {
-    case 'active':      return 'Aktiv'
-    case 'inactive':    return 'Inaktiv'
-    case 'coming_soon': return 'Bald'
-    case 'error':       return 'Fehler'
-    default:            return status
-  }
+const statusBadge: Record<string, { cls: string; label: string }> = {
+  active:      { cls: 'badge-idle', label: 'Aktiv' },
+  inactive:    { cls: 'badge-info', label: 'Inaktiv' },
+  coming_soon: { cls: 'badge-pending', label: 'Bald' },
+  error:       { cls: 'badge-error', label: 'Fehler' },
 }
 
 const fmtCost = (usd: number): string => `$${usd.toFixed(4)}`
 const fmtTokens = (n: number): string => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '5px',
-      fontSize: '12px',
-      fontWeight: 600,
-      color: statusColor(status),
-    }}>
-      <span style={{
-        width: '8px',
-        height: '8px',
-        borderRadius: '50%',
-        background: statusColor(status),
-        display: 'inline-block',
-      }} />
-      {statusLabel(status)}
-    </span>
-  )
-}
-
-function LatencyBar({ ms, maxMs }: { ms: number; maxMs: number }) {
-  const pct = maxMs > 0 ? Math.min((ms / maxMs) * 100, 100) : 0
-  return (
-    <div style={{ width: '100%', background: '#21262d', borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
-      <div style={{
-        width: `${pct}%`,
-        height: '100%',
-        background: ms > 1000 ? '#d29922' : '#3fb950',
-        borderRadius: '4px',
-        transition: 'width 0.4s ease',
-      }} />
-    </div>
-  )
-}
-
 function ProviderCard({ provider, maxLatency }: { provider: ProviderStats; maxLatency: number }) {
+  const st = statusBadge[provider.status] ?? { cls: 'badge-info', label: provider.status }
+  const latencyPct = maxLatency > 0 ? Math.min((provider.avg_latency_ms / maxLatency) * 100, 100) : 0
+
   return (
-    <div style={{
-      background: '#161b22',
-      border: '1px solid #21262d',
-      borderRadius: '10px',
-      padding: '18px 20px',
-      flex: '1 1 220px',
-      minWidth: '200px',
-      maxWidth: '340px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-    }}>
+    <div className="card provider-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <div style={{ fontSize: '16px', fontWeight: 700, color: '#e0e0e0' }}>{provider.name}</div>
-          <div style={{ fontSize: '12px', color: '#8b949e', marginTop: '2px' }}>{provider.model || '—'}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="provider-icon">
+            <Server size={20} />
+          </div>
+          <div>
+            <div style={{ fontSize: '15px', fontWeight: 600 }}>{provider.name}</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {provider.model || '\u2014'}
+            </div>
+          </div>
         </div>
-        <StatusBadge status={provider.status} />
+        <span className={`badge ${st.cls}`}>
+          <span className="badge-dot" />
+          {st.label}
+        </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+      <div className="provider-stats-grid">
         <div>
-          <div style={{ fontSize: '11px', color: '#8b949e', marginBottom: '2px' }}>Requests</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: '#7fdbca' }}>{provider.requests}</div>
+          <div className="label">Requests</div>
+          <div className="stat-value" style={{ fontSize: '18px', color: 'var(--accent-primary)' }}>
+            {provider.requests}
+          </div>
         </div>
         <div>
-          <div style={{ fontSize: '11px', color: '#8b949e', marginBottom: '2px' }}>Tokens (est.)</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: '#7fdbca' }}>
+          <div className="label">Tokens (est.)</div>
+          <div className="stat-value" style={{ fontSize: '18px', color: 'var(--accent-primary)' }}>
             {fmtTokens(provider.total_tokens_estimate)}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: '11px', color: '#8b949e', marginBottom: '2px' }}>Kosten</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: '#e0e0e0' }}>{fmtCost(provider.cost_usd)}</div>
+          <div className="label">Kosten</div>
+          <div className="stat-value mono" style={{ fontSize: '18px' }}>
+            {fmtCost(provider.cost_usd)}
+          </div>
         </div>
         <div>
-          <div style={{ fontSize: '11px', color: '#8b949e', marginBottom: '2px' }}>Latenz (avg)</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: '#e0e0e0' }}>
-            {provider.avg_latency_ms > 0 ? `${provider.avg_latency_ms}ms` : '—'}
+          <div className="label">Latenz (avg)</div>
+          <div className="stat-value mono" style={{ fontSize: '18px' }}>
+            {provider.avg_latency_ms > 0 ? `${provider.avg_latency_ms}ms` : '\u2014'}
           </div>
         </div>
       </div>
 
       {provider.avg_latency_ms > 0 && (
-        <div>
-          <LatencyBar ms={provider.avg_latency_ms} maxMs={maxLatency} />
+        <div className="progress-track" style={{ marginTop: '4px' }}>
+          <div
+            className="progress-fill"
+            style={{
+              width: `${latencyPct}%`,
+              background: provider.avg_latency_ms > 1000
+                ? 'var(--accent-warning)'
+                : 'var(--accent-success)',
+            }}
+          />
         </div>
       )}
     </div>
   )
 }
 
-function CostBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
-  const pct = total > 0 ? (value / total) * 100 : 0
+function CostBar({ label, value, maxVal, color }: { label: string; value: number; maxVal: number; color: string }) {
+  const pct = maxVal > 0 ? (value / maxVal) * 100 : 0
   return (
-    <div style={{ marginBottom: '10px' }}>
+    <div style={{ marginBottom: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-        <span style={{ color: '#e0e0e0' }}>{label}</span>
-        <span style={{ color: '#8b949e' }}>{fmtCost(value)}</span>
+        <span>{label}</span>
+        <span className="mono" style={{ color: 'var(--text-secondary)' }}>{fmtCost(value)}</span>
       </div>
-      <div style={{ background: '#21262d', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-        <div style={{
-          width: `${pct}%`,
-          minWidth: value > 0 ? '4px' : '0',
-          height: '100%',
-          background: color,
-          borderRadius: '4px',
-          transition: 'width 0.4s ease',
-        }} />
+      <div className="progress-track" style={{ height: '8px' }}>
+        <div
+          className="progress-fill"
+          style={{
+            width: `${pct}%`,
+            minWidth: value > 0 ? '4px' : '0',
+            background: color,
+          }}
+        />
       </div>
     </div>
   )
@@ -178,7 +143,7 @@ export default function ProviderView() {
       setProviders(prov)
       setCostSummary(cost)
       setError(null)
-    } catch (e) {
+    } catch {
       setError('Fehler beim Laden der Provider-Daten')
     } finally {
       setLoading(false)
@@ -196,48 +161,36 @@ export default function ProviderView() {
     : 1
 
   return (
-    <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
-      {/* Header summary */}
-      <div style={{
-        background: '#161b22',
-        border: '1px solid #21262d',
-        borderRadius: '10px',
-        padding: '18px 24px',
-        marginBottom: '20px',
-      }}>
+    <div className="view">
+      {/* Summary header */}
+      <div className="card-static" style={{ marginBottom: '20px' }}>
         {loading ? (
-          <div style={{ color: '#8b949e', fontSize: '14px' }}>Lade Daten…</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Lade Daten...</div>
         ) : error ? (
-          <div style={{ color: '#f85149', fontSize: '14px' }}>{error}</div>
+          <div style={{ color: 'var(--accent-danger)', fontSize: '14px' }}>{error}</div>
         ) : costSummary ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '28px', alignItems: 'center' }}>
+          <div className="provider-summary">
             <div>
-              <div style={{ fontSize: '12px', color: '#8b949e', marginBottom: '4px' }}>Gesamtkosten</div>
-              <div style={{ fontSize: '28px', fontWeight: 800, color: '#7fdbca' }}>
+              <div className="label" style={{ marginBottom: '4px' }}>Gesamtkosten</div>
+              <div className="stat-value mono" style={{ fontSize: '28px', color: 'var(--accent-primary)' }}>
                 {fmtCost(costSummary.total_cost_usd)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '12px', color: '#8b949e', marginBottom: '4px' }}>Requests</div>
-              <div style={{ fontSize: '22px', fontWeight: 700, color: '#e0e0e0' }}>
+              <div className="label" style={{ marginBottom: '4px' }}>Requests</div>
+              <div className="stat-value mono" style={{ fontSize: '22px' }}>
                 {costSummary.total_requests}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '12px', color: '#8b949e', marginBottom: '4px' }}>
-                Gesamt Tokens (est.)
-              </div>
-              <div style={{ fontSize: '22px', fontWeight: 700, color: '#e0e0e0' }}>
-                ~{fmtTokens(
-                  providers?.providers.reduce((s, p) => s + p.total_tokens_estimate, 0) ?? 0
-                )}
+              <div className="label" style={{ marginBottom: '4px' }}>Tokens (est.)</div>
+              <div className="stat-value mono" style={{ fontSize: '22px' }}>
+                ~{fmtTokens(providers?.providers.reduce((s, p) => s + p.total_tokens_estimate, 0) ?? 0)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '12px', color: '#8b949e', marginBottom: '4px' }}>
-                Gespart vs. nur Cloud
-              </div>
-              <div style={{ fontSize: '22px', fontWeight: 700, color: '#3fb950' }}>
+              <div className="label" style={{ marginBottom: '4px' }}>Gespart vs. Cloud</div>
+              <div className="stat-value mono" style={{ fontSize: '22px', color: 'var(--accent-success)' }}>
                 ~{fmtCost(costSummary.savings_vs_all_cloud_usd)}
               </div>
             </div>
@@ -247,41 +200,63 @@ export default function ProviderView() {
 
       {/* Provider cards */}
       {providers && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+        <div className="grid-3" style={{ marginBottom: '24px' }}>
           {providers.providers.map(p => (
             <ProviderCard key={p.name} provider={p} maxLatency={maxLatency} />
           ))}
         </div>
       )}
 
-      {/* Cost breakdown bar chart */}
+      {/* Cost breakdown */}
       {costSummary && (
-        <div style={{
-          background: '#161b22',
-          border: '1px solid #21262d',
-          borderRadius: '10px',
-          padding: '18px 24px',
-        }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e0e0e0', marginBottom: '14px' }}>
-            Kostenverteilung
-          </div>
+        <div className="card-static">
+          <h3 className="heading" style={{ fontSize: '14px', marginBottom: '16px' }}>Kostenverteilung</h3>
           {(() => {
             const max = Math.max(
               costSummary.groq_cost_usd,
               costSummary.cloud_cost_usd,
               costSummary.local_cost_usd,
-              0.0001 // avoid divide-by-zero
+              0.0001
             )
             return (
               <>
-                <CostBar label="Groq (Free)" value={costSummary.groq_cost_usd} total={max} color="#7fdbca" />
-                <CostBar label="Cloud LLM" value={costSummary.cloud_cost_usd} total={max} color="#d29922" />
-                <CostBar label="QO-LLM (IGQK)" value={costSummary.local_cost_usd} total={max} color="#3fb950" />
+                <CostBar label="Groq (Free)" value={costSummary.groq_cost_usd} maxVal={max} color="var(--accent-info)" />
+                <CostBar label="Cloud LLM" value={costSummary.cloud_cost_usd} maxVal={max} color="var(--accent-warning)" />
+                <CostBar label="QO-LLM (IGQK)" value={costSummary.local_cost_usd} maxVal={max} color="var(--accent-success)" />
               </>
             )
           })()}
         </div>
       )}
+
+      <style>{`
+        .provider-card {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .provider-icon {
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: var(--radius-md);
+          background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+          color: var(--accent-primary);
+        }
+        .provider-stats-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .provider-summary {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 32px;
+          align-items: center;
+        }
+      `}</style>
     </div>
   )
 }

@@ -1,4 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import {
+  BookOpen,
+  Crosshair,
+  AlertTriangle,
+  Sparkles,
+  Eye,
+  HelpCircle,
+  Heart,
+  Activity,
+} from 'lucide-react'
 
 interface ConsciousnessState {
   mood: string
@@ -17,34 +27,26 @@ interface ConsciousnessState {
   }
 }
 
-const moodEmoji: Record<string, string> = {
-  Learning: '📚',
-  Focused: '🎯',
-  Restless: '😤',
-  Creating: '🎨',
-  Reflecting: '🪞',
+const moodIcons: Record<string, typeof BookOpen> = {
+  Learning: BookOpen,
+  Focused: Crosshair,
+  Restless: AlertTriangle,
+  Creating: Sparkles,
+  Reflecting: Eye,
 }
 
-const valueColors: Record<string, string> = {
-  achtsamkeit: '#7fdbca',
-  anerkennung: '#bb86fc',
-  aufmerksamkeit: '#f78c6c',
-  entwicklung: '#ffcb6b',
-  sinn: '#82aaff',
-}
-
-const valueLabels: Record<string, string> = {
-  achtsamkeit: 'Achtsamkeit',
-  anerkennung: 'Anerkennung',
-  aufmerksamkeit: 'Aufmerksamkeit',
-  entwicklung: 'Entwicklung',
-  sinn: 'Sinn',
+const valueConfig: Record<string, { label: string; color: string }> = {
+  achtsamkeit:     { label: 'Achtsamkeit',     color: 'var(--accent-achtsamkeit)' },
+  anerkennung:     { label: 'Anerkennung',     color: 'var(--accent-anerkennung)' },
+  aufmerksamkeit:  { label: 'Aufmerksamkeit',  color: 'var(--accent-aufmerksamkeit)' },
+  entwicklung:     { label: 'Entwicklung',      color: 'var(--accent-entwicklung)' },
+  sinn:            { label: 'Sinn',             color: 'var(--accent-sinn)' },
 }
 
 function energyColor(energy: number): string {
-  if (energy > 60) return '#3fb950'
-  if (energy > 30) return '#d29922'
-  return '#f85149'
+  if (energy > 60) return 'var(--accent-success)'
+  if (energy > 30) return 'var(--accent-warning)'
+  return 'var(--accent-danger)'
 }
 
 export default function ConsciousnessView() {
@@ -65,7 +67,6 @@ export default function ConsciousnessView() {
         .then(applyState)
         .catch(() => {})
     }, 2000)
-    // fetch immediately
     fetch('/api/consciousness/state')
       .then(r => r.json())
       .then(applyState)
@@ -87,11 +88,9 @@ export default function ConsciousnessView() {
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        // BroadcastEvent is now tagged with "type"
         if (data.type === 'state') {
           applyState(data.state as ConsciousnessState)
         }
-        // "activity" events are ignored here — handled by ActivityFeed
       } catch {}
     }
 
@@ -109,160 +108,153 @@ export default function ConsciousnessView() {
 
   if (!state) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#484f58' }}>
-        Verbinde mit Bewusstseinsstrom...
+      <div className="view">
+        <div className="empty-state">
+          <Activity size={40} className="empty-icon" />
+          <div className="empty-title">Verbinde mit Bewusstseinsstrom...</div>
+        </div>
       </div>
     )
   }
 
-  const emoji = moodEmoji[state.mood] ?? '🤔'
+  const MoodIcon = moodIcons[state.mood] ?? HelpCircle
 
   return (
-    <div style={{ overflowY: 'auto', height: '100%', padding: '24px 20px' }}>
+    <div className="view">
       {/* Connection indicator */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-        <span style={{
-          fontSize: '12px',
-          color: connected ? '#3fb950' : '#d29922',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '5px',
-        }}>
-          <span style={{
-            width: '7px', height: '7px', borderRadius: '50%',
-            background: connected ? '#3fb950' : '#d29922',
-            display: 'inline-block',
-          }} />
+        <span className={`badge ${connected ? 'badge-idle' : 'badge-pending'}`}>
+          <span className="badge-dot" />
           {connected ? 'Live-Stream' : 'Polling'}
         </span>
       </div>
 
       {/* Mood */}
-      <div style={{
-        background: '#161b22',
-        border: '1px solid #21262d',
-        borderRadius: '12px',
-        padding: '24px',
-        marginBottom: '16px',
-        textAlign: 'center',
-      }}>
-        <div style={{ fontSize: '56px', marginBottom: '8px' }}>{emoji}</div>
-        <div style={{ fontSize: '13px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px' }}>Stimmung</div>
-        <div style={{ fontSize: '24px', fontWeight: 600, color: '#7fdbca' }}>{state.mood}</div>
+      <div className="card-static consciousness-mood">
+        <div className="mood-icon-wrapper">
+          <MoodIcon size={48} />
+        </div>
+        <div className="label" style={{ marginTop: '12px' }}>Stimmung</div>
+        <h2 className="heading" style={{ fontSize: '24px', color: 'var(--accent-primary)', marginTop: '4px' }}>
+          {state.mood}
+        </h2>
       </div>
 
-      {/* Energy + Heartbeat row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-        {/* Energy */}
-        <div style={{
-          background: '#161b22',
-          border: '1px solid #21262d',
-          borderRadius: '12px',
-          padding: '16px',
-        }}>
-          <div style={{ fontSize: '12px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '10px' }}>Energie</div>
-          <div style={{ fontSize: '28px', fontWeight: 600, color: energyColor(state.energy), marginBottom: '10px' }}>
+      {/* Energy + Heartbeat */}
+      <div className="grid-2" style={{ marginTop: '16px' }}>
+        <div className="card-static">
+          <div className="label" style={{ marginBottom: '10px' }}>Energie</div>
+          <div className="stat-value mono" style={{ color: energyColor(state.energy), marginBottom: '10px' }}>
             {Math.round(state.energy)}%
           </div>
-          <div style={{ height: '6px', background: '#21262d', borderRadius: '3px', overflow: 'hidden' }}>
-            <div style={{
-              height: '100%',
-              width: `${Math.min(100, state.energy)}%`,
-              background: energyColor(state.energy),
-              borderRadius: '3px',
-              transition: 'width 0.5s ease',
-            }} />
+          <div className="progress-track">
+            <div
+              className="progress-fill"
+              style={{
+                width: `${Math.min(100, state.energy)}%`,
+                background: energyColor(state.energy),
+              }}
+            />
           </div>
         </div>
 
-        {/* Heartbeat */}
-        <div style={{
-          background: '#161b22',
-          border: '1px solid #21262d',
-          borderRadius: '12px',
-          padding: '16px',
-        }}>
-          <div style={{ fontSize: '12px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '10px' }}>Herzschlag</div>
-          <div style={{ fontSize: '28px', fontWeight: 600, color: '#f85149', marginBottom: '4px' }}>
-            ♥ {state.heartbeat}
+        <div className="card-static">
+          <div className="label" style={{ marginBottom: '10px' }}>Herzschlag</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <Heart size={20} style={{ color: 'var(--accent-danger)' }} />
+            <span className="stat-value mono" style={{ color: 'var(--accent-danger)' }}>
+              {state.heartbeat}
+            </span>
           </div>
-          <div style={{ fontSize: '12px', color: '#484f58' }}>Ticks</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Ticks</div>
         </div>
       </div>
 
-      {/* Agents + Tasks row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-        {/* Agents */}
-        <div style={{
-          background: '#161b22',
-          border: '1px solid #21262d',
-          borderRadius: '12px',
-          padding: '16px',
-        }}>
-          <div style={{ fontSize: '12px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>Agenten</div>
+      {/* Agents + Tasks */}
+      <div className="grid-2" style={{ marginTop: '16px' }}>
+        <div className="card-static">
+          <div className="label" style={{ marginBottom: '12px' }}>Agenten</div>
           <div style={{ display: 'flex', gap: '16px' }}>
             <div>
-              <div style={{ fontSize: '22px', fontWeight: 600, color: '#7fdbca' }}>{state.agents_active}</div>
-              <div style={{ fontSize: '11px', color: '#484f58' }}>aktiv</div>
+              <div className="stat-value" style={{ fontSize: '22px', color: 'var(--accent-success)' }}>
+                {state.agents_active}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>aktiv</div>
             </div>
             <div>
-              <div style={{ fontSize: '22px', fontWeight: 600, color: '#8b949e' }}>{state.agents_idle}</div>
-              <div style={{ fontSize: '11px', color: '#484f58' }}>bereit</div>
+              <div className="stat-value" style={{ fontSize: '22px', color: 'var(--text-secondary)' }}>
+                {state.agents_idle}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>bereit</div>
             </div>
           </div>
         </div>
 
-        {/* Tasks */}
-        <div style={{
-          background: '#161b22',
-          border: '1px solid #21262d',
-          borderRadius: '12px',
-          padding: '16px',
-        }}>
-          <div style={{ fontSize: '12px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px' }}>Aufgaben</div>
+        <div className="card-static">
+          <div className="label" style={{ marginBottom: '12px' }}>Aufgaben</div>
           <div style={{ display: 'flex', gap: '16px' }}>
             <div>
-              <div style={{ fontSize: '22px', fontWeight: 600, color: '#3fb950' }}>{state.tasks_completed}</div>
-              <div style={{ fontSize: '11px', color: '#484f58' }}>erledigt</div>
+              <div className="stat-value" style={{ fontSize: '22px', color: 'var(--accent-success)' }}>
+                {state.tasks_completed}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>erledigt</div>
             </div>
             <div>
-              <div style={{ fontSize: '22px', fontWeight: 600, color: '#f85149' }}>{state.tasks_failed}</div>
-              <div style={{ fontSize: '11px', color: '#484f58' }}>fehlgesch.</div>
+              <div className="stat-value" style={{ fontSize: '22px', color: 'var(--accent-danger)' }}>
+                {state.tasks_failed}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>fehlgesch.</div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Values */}
-      <div style={{
-        background: '#161b22',
-        border: '1px solid #21262d',
-        borderRadius: '12px',
-        padding: '20px',
-      }}>
-        <div style={{ fontSize: '12px', color: '#484f58', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '16px' }}>Werte</div>
+      <div className="card-static" style={{ marginTop: '16px' }}>
+        <div className="label" style={{ marginBottom: '16px' }}>Werte</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {Object.entries(state.values).map(([key, val]) => (
-            <div key={key}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                <span style={{ fontSize: '13px', color: '#c9d1d9' }}>{valueLabels[key] ?? key}</span>
-                <span style={{ fontSize: '13px', color: valueColors[key] ?? '#7fdbca', fontVariantNumeric: 'tabular-nums' }}>
-                  {(val * 100).toFixed(0)}%
-                </span>
+          {Object.entries(state.values).map(([key, val]) => {
+            const cfg = valueConfig[key]
+            if (!cfg) return null
+            return (
+              <div key={key}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                  <span style={{ fontSize: '13px' }}>{cfg.label}</span>
+                  <span className="mono" style={{ fontSize: '13px', color: cfg.color }}>
+                    {(val * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="progress-track">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${Math.min(100, val * 100)}%`,
+                      background: cfg.color,
+                    }}
+                  />
+                </div>
               </div>
-              <div style={{ height: '5px', background: '#21262d', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width: `${Math.min(100, val * 100)}%`,
-                  background: valueColors[key] ?? '#7fdbca',
-                  borderRadius: '3px',
-                  transition: 'width 0.5s ease',
-                }} />
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
+
+      <style>{`
+        .consciousness-mood {
+          text-align: center;
+          padding: 32px 24px;
+        }
+        .mood-icon-wrapper {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+          color: var(--accent-primary);
+        }
+      `}</style>
     </div>
   )
 }

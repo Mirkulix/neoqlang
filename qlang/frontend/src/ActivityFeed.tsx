@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { Minus } from 'lucide-react'
 
 interface ActivityEntry {
   id: number
@@ -9,17 +10,10 @@ interface ActivityEntry {
 }
 
 const levelColor: Record<string, string> = {
-  info: '#8b949e',
-  success: '#3fb950',
-  error: '#f44336',
-  progress: '#1f6feb',
-}
-
-const levelDot: Record<string, string> = {
-  info: '●',
-  success: '✓',
-  error: '✗',
-  progress: '◌',
+  info: 'var(--text-secondary)',
+  success: 'var(--accent-success)',
+  error: 'var(--accent-danger)',
+  progress: 'var(--accent-primary)',
 }
 
 function formatTime(ts: number): string {
@@ -31,11 +25,11 @@ function formatTime(ts: number): string {
 }
 
 const MAX_ENTRIES = 50
-
 let _entryCounter = 0
 
 export default function ActivityFeed() {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
+  const [minimized, setMinimized] = useState(false)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const esRef = useRef<EventSource | null>(null)
 
@@ -59,20 +53,14 @@ export default function ActivityFeed() {
             return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next
           })
         }
-        // "state" events are ignored here — handled by ConsciousnessView
       } catch {}
     }
 
-    es.onerror = () => {
-      // Silently ignore SSE errors — ConsciousnessView handles reconnect
-    }
+    es.onerror = () => {}
 
-    return () => {
-      es.close()
-    }
+    return () => { es.close() }
   }, [])
 
-  // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: 'smooth' })
@@ -80,102 +68,115 @@ export default function ActivityFeed() {
   }, [entries])
 
   return (
-    <div style={{
-      background: '#0d1117',
-      borderTop: '1px solid #21262d',
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      flexShrink: 0,
-    }}>
-      {/* Header bar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '4px 12px',
-        borderBottom: '1px solid #21262d',
-        background: '#161b22',
-        flexShrink: 0,
-      }}>
-        <span style={{
-          fontSize: '11px',
-          fontWeight: 600,
-          color: '#484f58',
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-        }}>
-          Aktivitätslog
-        </span>
-        {entries.length > 0 && (
-          <span style={{
-            marginLeft: '8px',
-            fontSize: '10px',
-            color: '#30363d',
-          }}>
-            {entries.length} Einträge
-          </span>
-        )}
+    <div className="activity-feed">
+      {/* Header */}
+      <div className="activity-header">
+        <h3 className="heading" style={{ fontSize: '11px', letterSpacing: '0.08em' }}>
+          Aktivit&auml;t
+        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {entries.length > 0 && (
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+              {entries.length}
+            </span>
+          )}
+          <button
+            className="btn btn-ghost btn-icon"
+            style={{ minHeight: '28px', minWidth: '28px', padding: '2px' }}
+            onClick={() => setMinimized(m => !m)}
+            aria-label={minimized ? 'Aufklappen' : 'Einklappen'}
+          >
+            <Minus size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Log entries */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '4px 0',
-      }}>
-        {entries.length === 0 ? (
-          <div style={{
-            padding: '8px 12px',
-            fontSize: '12px',
-            color: '#30363d',
-            fontFamily: 'monospace',
-          }}>
-            Warte auf Aktivität...
-          </div>
-        ) : (
-          entries.map(entry => (
-            <div
-              key={entry.id}
-              style={{
-                display: 'flex',
-                alignItems: 'baseline',
-                gap: '8px',
-                padding: '2px 12px',
-                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                fontSize: '12px',
-                lineHeight: '1.5',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              <span style={{ color: '#484f58', flexShrink: 0 }}>
-                {formatTime(entry.timestamp)}
-              </span>
-              <span style={{
-                color: levelColor[entry.level] ?? '#8b949e',
-                flexShrink: 0,
-                fontSize: '10px',
-              }}>
-                {levelDot[entry.level] ?? '●'}
-              </span>
-              {entry.agent && (
-                <span style={{ color: '#7fdbca', flexShrink: 0, fontWeight: 600 }}>
-                  [{entry.agent}]
+      {!minimized && (
+        <div className="activity-log">
+          {entries.length === 0 ? (
+            <div className="activity-empty">Warte auf Aktivit&auml;t...</div>
+          ) : (
+            entries.map(entry => (
+              <div key={entry.id} className="activity-entry">
+                <span className="activity-time mono">{formatTime(entry.timestamp)}</span>
+                <span
+                  className="activity-dot"
+                  style={{ background: levelColor[entry.level] ?? 'var(--text-secondary)' }}
+                />
+                {entry.agent && (
+                  <span className="activity-agent">[{entry.agent}]</span>
+                )}
+                <span
+                  className="activity-message"
+                  style={{ color: levelColor[entry.level] ?? 'var(--text-secondary)' }}
+                >
+                  {entry.message}
                 </span>
-              )}
-              <span style={{
-                color: levelColor[entry.level] ?? '#8b949e',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}>
-                {entry.message}
-              </span>
-            </div>
-          ))
-        )}
-        <div ref={bottomRef} />
-      </div>
+              </div>
+            ))
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+
+      <style>{`
+        .activity-feed {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
+        .activity-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 6px 16px;
+          border-bottom: 1px solid var(--border);
+          background: var(--bg-elevated);
+          flex-shrink: 0;
+        }
+        .activity-log {
+          flex: 1;
+          overflow-y: auto;
+          padding: 4px 0;
+        }
+        .activity-empty {
+          padding: 8px 16px;
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        .activity-entry {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          padding: 2px 16px;
+          font-size: 12px;
+          line-height: 1.5;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .activity-time {
+          color: var(--text-muted);
+          flex-shrink: 0;
+        }
+        .activity-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          flex-shrink: 0;
+          align-self: center;
+        }
+        .activity-agent {
+          color: var(--accent-primary);
+          font-weight: 600;
+          flex-shrink: 0;
+        }
+        .activity-message {
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+      `}</style>
     </div>
   )
 }

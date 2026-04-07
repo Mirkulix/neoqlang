@@ -1,4 +1,16 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
+import {
+  MessageSquare,
+  Target,
+  Users,
+  Dna,
+  CheckCircle,
+  XCircle,
+  ClipboardList,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+} from 'lucide-react'
 
 interface HistoryEntry {
   id: number
@@ -8,15 +20,15 @@ interface HistoryEntry {
   details: string
 }
 
-const TYPE_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
-  chat:               { icon: '\u{1F4AC}', color: '#7fdbca', label: 'Chat' },
-  goal_created:       { icon: '\u{1F3AF}', color: '#ffcb6b', label: 'Ziel erstellt' },
-  goal_completed:     { icon: '\u2705',    color: '#4caf50', label: 'Ziel erledigt' },
-  goal_failed:        { icon: '\u274C',    color: '#f44336', label: 'Ziel fehlgeschlagen' },
-  agent_executed:     { icon: '\u{1F52C}', color: '#9c27b0', label: 'Agent ausgeführt' },
-  evolution_analyzed: { icon: '\u{1F9EC}', color: '#2196f3', label: 'Evolution analysiert' },
-  proposal_approved:  { icon: '\u2714',    color: '#4caf50', label: 'Vorschlag genehmigt' },
-  proposal_rejected:  { icon: '\u2718',    color: '#f44336', label: 'Vorschlag abgelehnt' },
+const typeConfig: Record<string, { icon: typeof MessageSquare; color: string; label: string }> = {
+  chat:               { icon: MessageSquare, color: 'var(--accent-info)',    label: 'Chat' },
+  goal_created:       { icon: Target,        color: 'var(--accent-warning)', label: 'Ziel erstellt' },
+  goal_completed:     { icon: CheckCircle,   color: 'var(--accent-success)', label: 'Ziel erledigt' },
+  goal_failed:        { icon: XCircle,       color: 'var(--accent-danger)',  label: 'Ziel fehlgeschlagen' },
+  agent_executed:     { icon: Users,         color: 'var(--accent-anerkennung)', label: 'Agent ausgef\u00FChrt' },
+  evolution_analyzed: { icon: Dna,           color: 'var(--accent-primary)', label: 'Evolution analysiert' },
+  proposal_approved:  { icon: CheckCircle,   color: 'var(--accent-success)', label: 'Vorschlag genehmigt' },
+  proposal_rejected:  { icon: XCircle,       color: 'var(--accent-danger)',  label: 'Vorschlag abgelehnt' },
 }
 
 function relativeTime(timestamp: number): string {
@@ -30,76 +42,55 @@ function relativeTime(timestamp: number): string {
 
 function HistoryItem({ entry }: { entry: HistoryEntry }) {
   const [expanded, setExpanded] = useState(false)
-  const cfg = TYPE_CONFIG[entry.action_type] ?? { icon: '\u{1F4CB}', color: '#8b949e', label: entry.action_type }
+  const cfg = typeConfig[entry.action_type] ?? {
+    icon: ClipboardList,
+    color: 'var(--text-secondary)',
+    label: entry.action_type,
+  }
+  const Icon = cfg.icon
 
   return (
-    <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
-      {/* Timeline line + dot */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '24px', flexShrink: 0 }}>
-        <div style={{
-          width: '24px',
-          height: '24px',
-          borderRadius: '50%',
-          background: cfg.color + '22',
-          border: `2px solid ${cfg.color}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '12px',
-          flexShrink: 0,
-        }}>
-          {cfg.icon}
+    <div className="timeline-item">
+      {/* Timeline dot + line */}
+      <div className="timeline-track">
+        <div className="timeline-dot" style={{ borderColor: cfg.color, color: cfg.color }}>
+          <Icon size={12} />
         </div>
-        <div style={{ flex: 1, width: '2px', background: '#21262d', marginTop: '4px' }} />
+        <div className="timeline-line" />
       </div>
 
       {/* Content */}
-      <div style={{
-        flex: 1,
-        background: '#161b22',
-        border: `1px solid ${cfg.color}33`,
-        borderRadius: '8px',
-        padding: '8px 12px',
-        marginBottom: '4px',
-      }}>
+      <div className="timeline-content" style={{ borderLeftColor: cfg.color }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-          <div>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: cfg.color, marginRight: '8px' }}>
+          <div style={{ flex: 1 }}>
+            <span className="badge" style={{
+              background: `color-mix(in srgb, ${cfg.color} 12%, transparent)`,
+              color: cfg.color,
+              border: `1px solid color-mix(in srgb, ${cfg.color} 25%, transparent)`,
+              marginRight: '8px',
+            }}>
               {cfg.label}
             </span>
-            <span style={{ fontSize: '12px', color: '#c9d1d9' }}>
-              {entry.description.length > 80 ? entry.description.slice(0, 80) + '…' : entry.description}
+            <span style={{ fontSize: '12px' }}>
+              {entry.description.length > 80 ? entry.description.slice(0, 80) + '\u2026' : entry.description}
             </span>
           </div>
-          <span style={{ fontSize: '10px', color: '#484f58', flexShrink: 0 }}>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>
             {relativeTime(entry.timestamp)}
           </span>
         </div>
         {entry.details && (
-          <div style={{ marginTop: '4px' }}>
+          <div style={{ marginTop: '6px' }}>
             <button
+              className="btn btn-ghost"
+              style={{ minHeight: '28px', padding: '2px 8px', fontSize: '10px' }}
               onClick={() => setExpanded(e => !e)}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '10px',
-                color: '#8b949e',
-                padding: 0,
-              }}
             >
-              {expanded ? '- Details ausblenden' : '+ Details anzeigen'}
+              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {expanded ? 'Ausblenden' : 'Details'}
             </button>
             {expanded && (
-              <div style={{
-                marginTop: '4px',
-                fontSize: '11px',
-                color: '#8b949e',
-                background: '#0d1117',
-                borderRadius: '4px',
-                padding: '6px 8px',
-                wordBreak: 'break-word',
-              }}>
+              <div className="timeline-details">
                 {entry.details}
               </div>
             )}
@@ -131,27 +122,86 @@ export default function HistorieView() {
   }, [])
 
   return (
-    <div style={{ overflowY: 'auto', height: '100%', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, fontSize: '16px', color: '#7fdbca', fontWeight: 600 }}>Aktionsverlauf</h2>
-        <span style={{ fontSize: '12px', color: '#484f58' }}>{entries.length} Einträge</span>
+    <div className="view">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Clock size={20} style={{ color: 'var(--accent-primary)' }} />
+          <h2 className="heading" style={{ margin: 0, fontSize: '16px' }}>Aktionsverlauf</h2>
+        </div>
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{entries.length} Eintr&auml;ge</span>
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', color: '#484f58', fontSize: '14px', marginTop: '48px' }}>
-          Laden...
+        <div className="empty-state">
+          <div className="empty-title">Laden...</div>
         </div>
       ) : entries.length === 0 ? (
-        <div style={{ textAlign: 'center', color: '#484f58', fontSize: '14px', marginTop: '48px' }}>
-          Noch keine Aktionen aufgezeichnet.
+        <div className="empty-state">
+          <Clock size={40} className="empty-icon" />
+          <div className="empty-title">Noch keine Aktionen aufgezeichnet.</div>
         </div>
       ) : (
-        <div>
+        <div className="timeline">
           {entries.map(entry => (
             <HistoryItem key={entry.id} entry={entry} />
           ))}
         </div>
       )}
+
+      <style>{`
+        .timeline {
+          display: flex;
+          flex-direction: column;
+        }
+        .timeline-item {
+          display: flex;
+          gap: 12px;
+          animation: fadeIn 300ms ease-out;
+        }
+        .timeline-track {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          width: 28px;
+          flex-shrink: 0;
+        }
+        .timeline-dot {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          border: 2px solid;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--bg-primary);
+          flex-shrink: 0;
+        }
+        .timeline-line {
+          flex: 1;
+          width: 2px;
+          background: var(--border);
+          margin-top: 4px;
+          min-height: 12px;
+        }
+        .timeline-content {
+          flex: 1;
+          background: var(--bg-surface);
+          border: 1px solid var(--border);
+          border-left: 3px solid;
+          border-radius: var(--radius-md);
+          padding: 10px 14px;
+          margin-bottom: 8px;
+        }
+        .timeline-details {
+          margin-top: 6px;
+          font-size: 11px;
+          color: var(--text-secondary);
+          background: var(--bg-primary);
+          border-radius: var(--radius-sm);
+          padding: 8px 10px;
+          word-break: break-word;
+        }
+      `}</style>
     </div>
   )
 }

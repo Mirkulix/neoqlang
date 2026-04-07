@@ -1,4 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
+import {
+  Crown,
+  Search,
+  Code,
+  Shield,
+  BarChart3,
+  Palette,
+  Bot,
+} from 'lucide-react'
 
 interface Agent {
   role: string
@@ -7,72 +16,72 @@ interface Agent {
   tasks_failed: number
 }
 
-const agentMeta: Record<string, { emoji: string; color: string }> = {
-  CEO:        { emoji: '👔', color: '#7fdbca' },
-  Researcher: { emoji: '🔬', color: '#82aaff' },
-  Developer:  { emoji: '💻', color: '#c3e88d' },
-  Guardian:   { emoji: '🛡️', color: '#f78c6c' },
-  Strategist: { emoji: '📊', color: '#ffcb6b' },
-  Artisan:    { emoji: '🎨', color: '#bb86fc' },
+const agentMeta: Record<string, { icon: typeof Crown; color: string }> = {
+  CEO:        { icon: Crown, color: 'var(--accent-info)' },
+  Researcher: { icon: Search, color: 'var(--accent-secondary)' },
+  Developer:  { icon: Code, color: 'var(--accent-success)' },
+  Guardian:   { icon: Shield, color: 'var(--accent-warning)' },
+  Strategist: { icon: BarChart3, color: 'var(--accent-entwicklung)' },
+  Artisan:    { icon: Palette, color: 'var(--accent-anerkennung)' },
 }
 
-const statusStyle: Record<string, { color: string; label: string }> = {
-  Idle:   { color: '#3fb950', label: 'Bereit' },
-  Active: { color: '#1f6feb', label: 'Aktiv' },
-  Error:  { color: '#f44336', label: 'Fehler' },
+const statusConfig: Record<string, { cls: string; label: string }> = {
+  Idle:   { cls: 'badge-idle', label: 'Bereit' },
+  Active: { cls: 'badge-active', label: 'Aktiv' },
+  Error:  { cls: 'badge-error', label: 'Fehler' },
 }
 
 function AgentCard({ agent }: { agent: Agent }) {
-  const meta = agentMeta[agent.role] ?? { emoji: '🤖', color: '#7fdbca' }
-  const status = statusStyle[agent.status] ?? { color: '#8b949e', label: agent.status }
+  const meta = agentMeta[agent.role] ?? { icon: Bot, color: 'var(--accent-primary)' }
+  const status = statusConfig[agent.status] ?? { cls: 'badge-info', label: agent.status }
+  const Icon = meta.icon
+  const total = agent.tasks_completed + agent.tasks_failed
+  const completePct = total > 0 ? (agent.tasks_completed / total) * 100 : 0
 
   return (
-    <div style={{
-      background: '#161b22',
-      border: `1px solid ${meta.color}33`,
-      borderRadius: '12px',
-      padding: '20px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '14px',
-    }}>
-      {/* Header */}
+    <div className="card agent-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <div style={{ fontSize: '28px', marginBottom: '4px' }}>{meta.emoji}</div>
-          <div style={{ fontSize: '15px', fontWeight: 600, color: meta.color }}>{agent.role}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="agent-icon-wrapper" style={{ color: meta.color }}>
+            <Icon size={24} />
+          </div>
+          <div>
+            <h3 className="heading agent-role" style={{ color: meta.color }}>{agent.role}</h3>
+          </div>
         </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '5px',
-          padding: '4px 10px',
-          borderRadius: '10px',
-          background: status.color + '1a',
-          border: `1px solid ${status.color}44`,
-        }}>
-          <span style={{
-            width: '7px', height: '7px',
-            borderRadius: '50%',
-            background: status.color,
-            display: 'inline-block',
-          }} />
-          <span style={{ fontSize: '11px', fontWeight: 600, color: status.color }}>{status.label}</span>
+        <span className={`badge ${status.cls}`}>
+          <span className="badge-dot" />
+          {status.label}
+        </span>
+      </div>
+
+      <div className="agent-stats">
+        <div className="agent-stat">
+          <span className="stat-value" style={{ color: 'var(--accent-success)', fontSize: '20px' }}>
+            {agent.tasks_completed}
+          </span>
+          <span className="label">erledigt</span>
+        </div>
+        <div className="agent-stat-divider" />
+        <div className="agent-stat">
+          <span className="stat-value" style={{ color: 'var(--accent-danger)', fontSize: '20px' }}>
+            {agent.tasks_failed}
+          </span>
+          <span className="label">fehlgesch.</span>
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'flex', gap: '16px' }}>
-        <div>
-          <div style={{ fontSize: '20px', fontWeight: 600, color: '#3fb950' }}>{agent.tasks_completed}</div>
-          <div style={{ fontSize: '11px', color: '#484f58' }}>erledigt</div>
+      {total > 0 && (
+        <div className="progress-track" style={{ marginTop: '4px' }}>
+          <div
+            className="progress-fill"
+            style={{
+              width: `${completePct}%`,
+              background: 'var(--accent-success)',
+            }}
+          />
         </div>
-        <div style={{ width: '1px', background: '#21262d' }} />
-        <div>
-          <div style={{ fontSize: '20px', fontWeight: 600, color: '#f85149' }}>{agent.tasks_failed}</div>
-          <div style={{ fontSize: '11px', color: '#484f58' }}>fehlgesch.</div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -94,23 +103,58 @@ export default function AgentsView() {
 
   if (agents.length === 0) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#484f58' }}>
-        Lade Agenten...
+      <div className="view">
+        <div className="empty-state">
+          <Bot size={40} className="empty-icon" />
+          <div className="empty-title">Lade Agenten...</div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div style={{ overflowY: 'auto', height: '100%', padding: '24px 20px' }}>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-        gap: '14px',
-      }}>
+    <div className="view">
+      <div className="grid-3">
         {agents.map(agent => (
           <AgentCard key={agent.role} agent={agent} />
         ))}
       </div>
+
+      <style>{`
+        .agent-card {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .agent-icon-wrapper {
+          width: 44px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: var(--radius-md);
+          background: color-mix(in srgb, currentColor 10%, transparent);
+        }
+        .agent-role {
+          font-size: 14px;
+          margin: 0;
+        }
+        .agent-stats {
+          display: flex;
+          gap: 16px;
+          align-items: flex-end;
+        }
+        .agent-stat {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .agent-stat-divider {
+          width: 1px;
+          height: 32px;
+          background: var(--border);
+        }
+      `}</style>
     </div>
   )
 }

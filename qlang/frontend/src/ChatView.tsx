@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { Send } from 'lucide-react'
 
 interface ChatMessage {
   id: string
@@ -19,6 +20,16 @@ interface ChatEntry {
 interface ChatResponse {
   response: string
   tier?: string
+}
+
+function LoadingDots() {
+  return (
+    <div className="chat-bubble chat-bubble-assistant">
+      <span className="loading-dot" style={{ animationDelay: '0ms' }} />
+      <span className="loading-dot" style={{ animationDelay: '200ms' }} />
+      <span className="loading-dot" style={{ animationDelay: '400ms' }} />
+    </div>
+  )
 }
 
 export default function ChatView() {
@@ -96,139 +107,142 @@ export default function ChatView() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Message list */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '20px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-      }}>
+    <div className="chat-container">
+      <div className="chat-messages">
         {messages.length === 0 && !loading && (
-          <div style={{ textAlign: 'center', color: '#484f58', marginTop: '60px', fontSize: '15px' }}>
-            Starte eine Unterhaltung mit QO
+          <div className="empty-state">
+            <div className="empty-title">Starte eine Konversation...</div>
+            <div className="empty-hint">Schreibe eine Nachricht, um mit QO zu kommunizieren.</div>
           </div>
         )}
 
         {messages.map(msg => (
           <div
             key={msg.id}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            }}
+            className={`chat-row ${msg.role === 'user' ? 'chat-row-user' : 'chat-row-assistant'}`}
           >
-            <div
-              style={{
-                maxWidth: '70%',
-                padding: '10px 14px',
-                borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: msg.role === 'user' ? '#1f6feb' : '#161b22',
-                color: '#e0e0e0',
-                fontSize: '14px',
-                lineHeight: '1.5',
-                wordBreak: 'break-word',
-                border: msg.role === 'assistant' ? '1px solid #21262d' : 'none',
-              }}
-            >
+            <div className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-assistant'}`}>
               {msg.content}
             </div>
             {msg.role === 'assistant' && msg.tier && (
-              <span style={{
-                fontSize: '11px',
-                color: '#484f58',
-                marginTop: '4px',
-                marginLeft: '4px',
-                background: '#161b22',
-                border: '1px solid #21262d',
-                padding: '1px 6px',
-                borderRadius: '4px',
-              }}>
-                {msg.tier}
-              </span>
+              <span className="chat-tier-badge">{msg.tier}</span>
             )}
           </div>
         ))}
 
         {loading && (
-          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-            <div style={{
-              padding: '10px 14px',
-              borderRadius: '16px 16px 16px 4px',
-              background: '#161b22',
-              border: '1px solid #21262d',
-              display: 'flex',
-              gap: '4px',
-              alignItems: 'center',
-            }}>
-              <span style={{ animation: 'pulse 1.2s ease-in-out infinite', color: '#7fdbca', fontSize: '20px', lineHeight: 1 }}>•</span>
-              <span style={{ animation: 'pulse 1.2s ease-in-out 0.2s infinite', color: '#7fdbca', fontSize: '20px', lineHeight: 1 }}>•</span>
-              <span style={{ animation: 'pulse 1.2s ease-in-out 0.4s infinite', color: '#7fdbca', fontSize: '20px', lineHeight: 1 }}>•</span>
-              <style>{`@keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }`}</style>
-            </div>
+          <div className="chat-row chat-row-assistant">
+            <LoadingDots />
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Input area */}
-      <div style={{
-        padding: '16px 20px',
-        borderTop: '1px solid #21262d',
-        background: '#161b22',
-        display: 'flex',
-        gap: '10px',
-        alignItems: 'flex-end',
-      }}>
+      <div className="chat-input-area">
         <textarea
           ref={inputRef}
+          className="input chat-input"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Nachricht eingeben... (Enter zum Senden, Shift+Enter für Zeilenumbruch)"
+          placeholder="Nachricht eingeben... (Enter zum Senden)"
           rows={1}
-          style={{
-            flex: 1,
-            background: '#0d1117',
-            border: '1px solid #30363d',
-            borderRadius: '8px',
-            padding: '10px 14px',
-            color: '#e0e0e0',
-            fontSize: '14px',
-            resize: 'none',
-            outline: 'none',
-            fontFamily: 'inherit',
-            lineHeight: '1.5',
-            maxHeight: '120px',
-            overflowY: 'auto',
-            transition: 'border-color 0.15s',
-          }}
-          onFocus={e => { e.target.style.borderColor = '#7fdbca' }}
-          onBlur={e => { e.target.style.borderColor = '#30363d' }}
         />
         <button
+          className="btn btn-primary chat-send-btn"
           onClick={sendMessage}
           disabled={loading || !input.trim()}
-          style={{
-            padding: '10px 18px',
-            background: loading || !input.trim() ? '#21262d' : '#7fdbca',
-            color: loading || !input.trim() ? '#484f58' : '#0d1117',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-            fontSize: '14px',
-            fontWeight: 600,
-            transition: 'all 0.15s',
-            flexShrink: 0,
-          }}
+          aria-label="Senden"
         >
-          Senden
+          <Send size={18} />
         </button>
       </div>
+
+      <style>{`
+        .chat-container {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          overflow: hidden;
+        }
+        .chat-messages {
+          flex: 1;
+          overflow-y: auto;
+          padding: 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .chat-row {
+          display: flex;
+          flex-direction: column;
+          animation: fadeIn 300ms ease-out;
+        }
+        .chat-row-user {
+          align-items: flex-end;
+        }
+        .chat-row-assistant {
+          align-items: flex-start;
+        }
+        .chat-bubble {
+          max-width: 70%;
+          padding: 12px 16px;
+          font-size: 14px;
+          line-height: 1.6;
+          word-break: break-word;
+        }
+        .chat-bubble-user {
+          background: var(--accent-primary);
+          color: #ffffff;
+          border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
+        }
+        .chat-bubble-assistant {
+          background: var(--bg-surface);
+          color: var(--text-primary);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .chat-tier-badge {
+          font-size: 10px;
+          color: var(--text-muted);
+          background: var(--bg-surface);
+          border: 1px solid var(--border);
+          padding: 1px 8px;
+          border-radius: 12px;
+          margin-top: 4px;
+          margin-left: 4px;
+        }
+        .chat-input-area {
+          padding: 16px 24px;
+          border-top: 1px solid var(--border);
+          background: var(--bg-surface);
+          display: flex;
+          gap: 12px;
+          align-items: flex-end;
+        }
+        .chat-input {
+          flex: 1;
+          max-height: 120px;
+          overflow-y: auto;
+        }
+        .chat-send-btn {
+          flex-shrink: 0;
+          min-width: 44px;
+          padding: 8px 16px;
+        }
+        .loading-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--accent-primary);
+          display: inline-block;
+          animation: dotPulse 1.2s ease-in-out infinite;
+        }
+      `}</style>
     </div>
   )
 }
