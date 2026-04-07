@@ -6,6 +6,7 @@ use axum::{
 };
 use qo_agents::AgentRegistry;
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
+use qo_evolution::{PatternDetector, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
 use qo_memory::{ObsidianBridge, Store};
 use std::sync::Arc;
@@ -20,6 +21,9 @@ pub struct AppState {
     pub stream: ConsciousnessStream,
     pub obsidian: ObsidianBridge,
     pub agents: Mutex<AgentRegistry>,
+    pub patterns: Mutex<PatternDetector>,
+    pub proposals: Mutex<ProposalEngine>,
+    pub quantum: Mutex<QuantumState>,
 }
 
 pub struct QoConfig {
@@ -59,6 +63,14 @@ pub fn build_app(
     let consciousness = Mutex::new(ConsciousnessState::default());
 
     let agents = Mutex::new(AgentRegistry::new());
+    let patterns = Mutex::new(PatternDetector::new());
+    let proposals = Mutex::new(ProposalEngine::new());
+    let quantum = Mutex::new(QuantumState::new(vec![
+        "Direkte Ausführung".into(),
+        "Dekomposition + Delegation".into(),
+        "Recherche zuerst".into(),
+        "Kreative Lösung".into(),
+    ]));
 
     let state = Arc::new(AppState {
         llm,
@@ -67,6 +79,9 @@ pub fn build_app(
         stream,
         obsidian,
         agents,
+        patterns,
+        proposals,
+        quantum,
     });
 
     let api_router = Router::new()
@@ -86,6 +101,12 @@ pub fn build_app(
         .route("/api/goals", get(routes::goals::list_goals))
         .route("/api/goals", post(routes::goals::create_goal))
         .route("/api/goals/:id", get(routes::goals::get_goal))
+        .route("/api/evolution/state", get(routes::evolution::quantum_state))
+        .route("/api/evolution/patterns", get(routes::evolution::list_patterns))
+        .route("/api/evolution/proposals", get(routes::evolution::list_proposals))
+        .route("/api/evolution/proposals/:id/approve", post(routes::evolution::approve_proposal))
+        .route("/api/evolution/proposals/:id/reject", post(routes::evolution::reject_proposal))
+        .route("/api/evolution/analyze", post(routes::evolution::analyze))
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {
