@@ -235,36 +235,60 @@ pub async fn test_provider(
     State(state): State<Arc<AppState>>,
     Json(req): Json<TestProviderRequest>,
 ) -> Result<Json<TestProviderResponse>, StatusCode> {
-    let json = state
+    // Try redb first, then fallback to env-based runtime providers
+    let (base_url, model, api_key) = if let Some(json) = state
         .store
         .get_provider(&req.id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let config: qo_llm::ProviderConfig =
-        serde_json::from_str(&json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let base_url = config
-        .base_url
-        .clone()
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        .ok()
+        .flatten()
+    {
+        let config: qo_llm::ProviderConfig =
+            serde_json::from_str(&json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        (
+            config.base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            config.model,
+            config.api_key,
+        )
+    } else {
+        // Fallback: env-based providers
+        match req.id.as_str() {
+            "groq" => (
+                "https://api.groq.com/openai/v1".to_string(),
+                "llama-3.3-70b-versatile".to_string(),
+                std::env::var("GROQ_API_KEY").unwrap_or_default(),
+            ),
+            "cloud" => (
+                std::env::var("CLOUD_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+                std::env::var("CLOUD_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+                std::env::var("ANTHROPIC_API_KEY")
+                    .or_else(|_| std::env::var("DEEPSEEK_API_KEY"))
+                    .unwrap_or_default(),
+            ),
+            _ => return Ok(Json(TestProviderResponse {
+                success: false,
+                latency_ms: 0,
+                message: format!("Provider '{}' nicht gefunden", req.id),
+            })),
+        }
+    };
 
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let body = serde_json::json!({
-        "model": config.model,
+        "model": model,
         "messages": [{"role": "user", "content": "Sage einfach 'OK'"}],
         "max_tokens": 10,
     });
 
     let start = Instant::now();
-    let result = client
-        .post(&url)
-        .bearer_auth(&config.api_key)
-        .json(&body)
-        .send()
-        .await;
+
+    // Don't send Authorization header if api_key is empty (e.g. Ollama)
+    let mut request = client.post(&url).json(&body);
+    if !api_key.is_empty() {
+        request = request.bearer_auth(&api_key);
+    }
+    let result = request.send().await;
 
     let elapsed = start.elapsed().as_millis() as u64;
 
