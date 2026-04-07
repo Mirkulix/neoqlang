@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { Target, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react'
+import { Target, ChevronDown, ChevronUp, ArrowRight, Download } from 'lucide-react'
+
+function downloadFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface Subtask {
   description: string
@@ -169,8 +179,38 @@ function GoalCard({ goal }: { goal: Goal }) {
       )}
 
       {goal.status === 'Completed' && goal.result && (
-        <div className="goal-result">
-          {goal.result}
+        <div className="goal-result" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <span>{goal.result}</span>
+          <button
+            className="btn btn-ghost btn-icon"
+            style={{ flexShrink: 0, padding: '2px 6px', minHeight: 'unset' }}
+            title="Ziel exportieren"
+            aria-label="Ziel als Markdown exportieren"
+            onClick={() => {
+              const date = new Date(goal.created_at).toISOString().slice(0, 10)
+              const lines: string[] = [
+                `# Ziel: ${goal.description}`,
+                '',
+                `**Status:** ${statusLabel[goal.status] ?? goal.status}`,
+                `**Erstellt:** ${new Date(goal.created_at).toLocaleString('de-DE')}`,
+                '',
+              ]
+              if (goal.subtasks?.length) {
+                lines.push('## Teilaufgaben', '')
+                for (const sub of goal.subtasks) {
+                  lines.push(`### ${sub.description}`)
+                  lines.push(`- Agent: ${sub.assigned_agent}`)
+                  lines.push(`- Status: ${statusLabel[sub.status] ?? sub.status}`)
+                  if (sub.result) lines.push(`- Ergebnis: ${sub.result}`)
+                  lines.push('')
+                }
+              }
+              lines.push('## Ergebnis', '', goal.result ?? '')
+              downloadFile(`qo-goal-${date}-${goal.id}.md`, lines.join('\n'), 'text/markdown')
+            }}
+          >
+            <Download size={14} />
+          </button>
         </div>
       )}
 

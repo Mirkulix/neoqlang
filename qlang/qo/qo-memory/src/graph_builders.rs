@@ -240,6 +240,41 @@ pub fn build_goal_graph(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_graph_has_correct_structure() {
+        let g = build_chat_graph("hello", "world", "groq", 100);
+        assert_eq!(g.nodes.len(), 5);
+        assert_eq!(g.edges.len(), 4);
+        assert_eq!(g.graph_type as u8, GraphType::Chat as u8);
+        assert!(g.metadata.total_duration_ms.is_some());
+    }
+
+    #[test]
+    fn goal_graph_has_correct_structure() {
+        let subtasks = vec![
+            ("Researcher".into(), "Do research".into(), true, 500),
+            ("Developer".into(), "Build it".into(), false, 300),
+        ];
+        let g = build_goal_graph("Test goal", &subtasks, 1000);
+        assert!(g.nodes.len() >= 5); // input + memory + ceo + 2 subtasks + summary + output
+        assert!(!g.edges.is_empty());
+        // Check subtask nodes exist
+        assert!(g.nodes.iter().any(|n| n.id == "subtask_0"));
+        assert!(g.nodes.iter().any(|n| n.id == "subtask_1"));
+    }
+
+    #[test]
+    fn evolution_graph_structure() {
+        let g = build_evolution_graph(3, 2);
+        assert_eq!(g.nodes.len(), 5);
+        assert!(g.title.contains("3 Patterns"));
+    }
+}
+
 /// Build a graph for an evolution analysis cycle
 pub fn build_evolution_graph(patterns_found: usize, proposals_created: usize) -> StoredGraph {
     StoredGraph {

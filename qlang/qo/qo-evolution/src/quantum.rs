@@ -124,4 +124,26 @@ mod tests {
         qs.evolve(0, true, 0.1);
         assert_eq!(qs.generation, 1);
     }
+
+    #[test]
+    fn entropy_decreases_with_learning() {
+        let mut qs = QuantumState::new(vec!["A".into(), "B".into(), "C".into()]);
+        let initial_entropy = qs.entropy;
+        // Repeatedly reward strategy 0
+        for _ in 0..20 {
+            qs.evolve(0, true, 0.1);
+        }
+        // Entropy should decrease (more certainty)
+        assert!(qs.entropy < initial_entropy);
+    }
+
+    #[test]
+    fn weights_stay_normalized() {
+        let mut qs = QuantumState::new(vec!["X".into(), "Y".into()]);
+        for i in 0..100 {
+            qs.evolve(i % 2, i % 3 == 0, 0.2);
+        }
+        let sum: f32 = qs.strategy_weights.iter().sum();
+        assert!((sum - 1.0).abs() < 0.01);
+    }
 }

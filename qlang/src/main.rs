@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         groq_api_key: std::env::var("GROQ_API_KEY").ok(),
         cloud_config,
         data_dir: PathBuf::from("data"),
-        obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/Orbit"),
+        obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir,
     };
 

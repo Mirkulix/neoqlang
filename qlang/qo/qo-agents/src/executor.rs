@@ -355,4 +355,19 @@ mod tests {
         assert_eq!(tasks[0].assigned_to, AgentRole::Researcher);
         assert_eq!(tasks[1].assigned_to, AgentRole::Strategist);
     }
+
+    #[test]
+    fn parse_subtasks_handles_real_ceo_output() {
+        // Simulate realistic CEO output
+        let response = "Hier ist mein Plan:\n\n\
+            1. [Researcher] Recherchiere aktuelle Trends im KI-Markt\n\
+            2. [Developer] Erstelle einen Prototyp der API\n\
+            3. [Strategist] Entwickle eine Go-to-Market Strategie\n\n\
+            Diese drei Schritte sollten das Ziel erreichen.";
+        let tasks = parse_subtasks(response);
+        assert_eq!(tasks.len(), 3);
+        assert!(tasks[0].description.contains("Recherchiere"));
+        assert!(tasks[1].description.contains("Prototyp"));
+        assert!(tasks[2].description.contains("Strategie"));
+    }
 }

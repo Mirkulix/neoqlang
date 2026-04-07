@@ -40,6 +40,20 @@
   --transition: 200ms ease-out;
 }
 
+[data-theme="dark"] {
+  --bg-primary: #000000;
+  --bg-surface: #0a0a0f;
+  --bg-elevated: #12121a;
+  --bg-input: #1a1a24;
+  --text-primary: #e8e8ed;
+  --text-secondary: #8b8b9e;
+  --text-muted: #4a4a5e;
+  --border: #1e1e2a;
+  --border-active: #2563eb33;
+  --glow-primary: 0 0 12px #2563eb40;
+  --glow-success: 0 0 12px #22c55e40;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

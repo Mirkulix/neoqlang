@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react'
-import { GitBranch, Timer, ArrowRight, Circle, RefreshCw } from 'lucide-react'
+import { GitBranch, Timer, ArrowRight, Circle, RefreshCw, Download } from 'lucide-react'
+
+function downloadFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface GraphNode {
   id: string
@@ -291,29 +301,49 @@ function GraphCard({ graph }: { graph: StoredGraph }) {
           <GraphDiagram nodes={graph.nodes} edges={graph.edges} />
 
           {/* Metadata bar */}
-          {graph.metadata && (
-            <div className="graph-meta-bar">
-              {graph.metadata.total_duration_ms != null && (
-                <span className="graph-meta-item">
-                  <Timer size={11} />
-                  {graph.metadata.total_duration_ms}ms
-                </span>
-              )}
-              {graph.metadata.llm_tier && (
-                <span className="graph-meta-item">
-                  tier: {graph.metadata.llm_tier}
-                </span>
-              )}
-              {graph.metadata.tokens_estimated != null && (
-                <span className="graph-meta-item">
-                  ~{graph.metadata.tokens_estimated} tokens
-                </span>
-              )}
-              <span className={`badge ${typeBadgeClass(graph.graph_type)}`} style={{ marginLeft: 'auto' }}>
-                {graphTypeLabel(graph.graph_type)}
+          <div className="graph-meta-bar">
+            {graph.metadata?.total_duration_ms != null && (
+              <span className="graph-meta-item">
+                <Timer size={11} />
+                {graph.metadata.total_duration_ms}ms
               </span>
-            </div>
-          )}
+            )}
+            {graph.metadata?.llm_tier && (
+              <span className="graph-meta-item">
+                tier: {graph.metadata.llm_tier}
+              </span>
+            )}
+            {graph.metadata?.tokens_estimated != null && (
+              <span className="graph-meta-item">
+                ~{graph.metadata.tokens_estimated} tokens
+              </span>
+            )}
+            <span className={`badge ${typeBadgeClass(graph.graph_type)}`} style={{ marginLeft: 'auto' }}>
+              {graphTypeLabel(graph.graph_type)}
+            </span>
+            <button
+              className="btn btn-ghost btn-icon"
+              style={{ padding: '2px 6px', minHeight: 'unset', marginLeft: 8 }}
+              title="Graph exportieren"
+              aria-label="Graph als JSON exportieren"
+              onClick={e => {
+                e.stopPropagation()
+                const date = new Date(graph.timestamp * 1000).toISOString().slice(0, 10)
+                const payload = JSON.stringify({
+                  id: graph.id,
+                  timestamp: graph.timestamp,
+                  graph_type: graph.graph_type,
+                  title: graph.title,
+                  nodes: graph.nodes,
+                  edges: graph.edges,
+                  metadata: graph.metadata,
+                }, null, 2)
+                downloadFile(`qo-graph-${date}-${graph.id}.json`, payload, 'application/json')
+              }}
+            >
+              <Download size={14} />
+            </button>
+          </div>
         </div>
       )}
     </div>
