@@ -1,0 +1,23 @@
+[package]
+name = "qo-server"
+version.workspace = true
+edition.workspace = true
+description = "QO HTTP server — Axum routes + WebSocket + static files"
+
+[dependencies]
+qo-agents = { path = "../qo-agents" }
+qo-evolution = { path = "../qo-evolution" }
+qo-consciousness = { path = "../qo-consciousness" }
+qo-llm = { path = "../qo-llm" }
+qo-memory = { path = "../qo-memory" }
+qo-simulation = { path = "../qo-simulation" }
+qo-values = { path = "../qo-values" }
+axum = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

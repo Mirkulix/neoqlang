@@ -12,6 +12,15 @@ members = [
     "crates/qlang-agent",
     "crates/qlang-python",
     "crates/qlang-sdk",
+    "qo/qo-server",
+    "qo/qo-llm",
+    "qo/qo-memory",
+    "qo/qo-consciousness",
+    "qo/qo-values",
+    "qo/qo-agents",
+    "qo/qo-evolution",
+    "qo/qo-simulation",
+    "qo/qo-telegram",
 ]
 resolver = "2"
 
@@ -29,6 +38,13 @@ qlang-agent = { path = "crates/qlang-agent" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+reqwest = { version = "0.12", features = ["json"] }
+redb = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.51.0", features = ["full"] }
 
 [dependencies]
 qlang-core = { workspace = true }
@@ -39,6 +55,19 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
 tokio = { version = "1.51.0", features = ["full"] }
+qo-server = { path = "qo/qo-server" }
+qo-telegram = { path = "qo/qo-telegram" }
+qo-memory = { path = "qo/qo-memory" }
+qo-agents = { path = "qo/qo-agents" }
+qo-consciousness = { path = "qo/qo-consciousness" }
+qo-evolution = { path = "qo/qo-evolution" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
+
+[[bin]]
+name = "qo"
+path = "src/main.rs"
 
 [features]
 default = ["llvm"]

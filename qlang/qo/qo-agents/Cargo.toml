@@ -1,0 +1,14 @@
+[package]
+name = "qo-agents"
+version.workspace = true
+edition.workspace = true
+description = "QO hybrid agent runtime — graph-structured agents with LLM reasoning"
+
+[dependencies]
+qo-llm = { path = "../qo-llm" }
+qo-memory = { path = "../qo-memory" }
+qo-values = { path = "../qo-values" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
