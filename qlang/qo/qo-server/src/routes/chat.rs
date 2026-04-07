@@ -1,4 +1,5 @@
 use axum::{extract::State, Json};
+use qo_consciousness::StateEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -52,12 +53,23 @@ pub async fn chat(
         tracing::warn!("failed to store chat in redb: {e}");
     }
 
-    // Update consciousness
+    // Update consciousness and log to Obsidian
     {
         let mut cs = state.consciousness.lock().await;
-        cs.drain_energy(5.0);
-        cs.task_completed();
+        cs.process_event(&StateEvent::ChatReceived);
+        let mood_str = format!("{:?}", cs.mood);
+        let energy = cs.energy;
+        let heartbeat = cs.heartbeat;
         state.stream.publish(cs.clone());
+        drop(cs);
+
+        if let Err(e) = state
+            .obsidian
+            .log_consciousness_event(&mood_str, energy, heartbeat, "ChatReceived")
+            .await
+        {
+            tracing::warn!("failed to log consciousness event to Obsidian: {e}");
+        }
     }
 
     Ok(Json(ChatResponse {

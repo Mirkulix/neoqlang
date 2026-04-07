@@ -1,4 +1,4 @@
-use qo_values::ValueScores;
+use qo_values::{Value, ValueScores};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +37,19 @@ impl Default for ConsciousnessState {
     }
 }
 
+/// Input events that drive state transitions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StateEvent {
+    ChatReceived,
+    TaskCompleted { agent: String },
+    TaskFailed { agent: String, error: String },
+    GoalCreated { description: String },
+    GoalCompleted { description: String },
+    GoalFailed { description: String },
+    ValueCheck { scores: [f32; 5] },
+    Idle,
+}
+
 impl ConsciousnessState {
     /// Increment heartbeat and regen energy when agents are idle.
     pub fn tick(&mut self) {
@@ -62,6 +75,52 @@ impl ConsciousnessState {
     /// Record a failed task.
     pub fn task_failed(&mut self) {
         self.tasks_failed += 1;
+    }
+
+    /// Process a StateEvent and update mood/values accordingly.
+    pub fn process_event(&mut self, event: &StateEvent) {
+        match event {
+            StateEvent::ChatReceived => {
+                self.mood = Mood::Focused;
+                self.drain_energy(1.0);
+            }
+            StateEvent::TaskCompleted { .. } => {
+                self.tasks_completed += 1;
+                self.mood = Mood::Creating;
+            }
+            StateEvent::TaskFailed { .. } => {
+                self.tasks_failed += 1;
+                if self.tasks_failed > self.tasks_completed / 2 {
+                    self.mood = Mood::Restless;
+                }
+            }
+            StateEvent::GoalCreated { .. } => {
+                self.mood = Mood::Focused;
+            }
+            StateEvent::GoalCompleted { .. } => {
+                self.mood = Mood::Reflecting;
+                let current = self.values.get(Value::Entwicklung);
+                self.values.set(Value::Entwicklung, current + 0.02);
+            }
+            StateEvent::GoalFailed { .. } => {
+                self.mood = Mood::Restless;
+                self.drain_energy(5.0);
+            }
+            StateEvent::ValueCheck { scores } => {
+                self.values.achtsamkeit = scores[0].clamp(0.0, 1.0);
+                self.values.anerkennung = scores[1].clamp(0.0, 1.0);
+                self.values.aufmerksamkeit = scores[2].clamp(0.0, 1.0);
+                self.values.entwicklung = scores[3].clamp(0.0, 1.0);
+                self.values.sinn = scores[4].clamp(0.0, 1.0);
+            }
+            StateEvent::Idle => {
+                if self.energy > 80.0 {
+                    self.mood = Mood::Learning;
+                } else if self.energy < 30.0 {
+                    self.mood = Mood::Restless;
+                }
+            }
+        }
     }
 }
 
@@ -103,5 +162,65 @@ mod tests {
         state.agents_active = 0;
         state.tick();
         assert!(state.energy > 50.0);
+    }
+
+    #[test]
+    fn test_process_chat_event() {
+        let mut state = ConsciousnessState::default();
+        state.process_event(&StateEvent::ChatReceived);
+        assert_eq!(state.mood, Mood::Focused);
+        assert!(state.energy < 100.0);
+    }
+
+    #[test]
+    fn test_process_goal_completed() {
+        let mut state = ConsciousnessState::default();
+        let before = state.values.get(Value::Entwicklung);
+        state.process_event(&StateEvent::GoalCompleted {
+            description: "Finish phase 1".to_string(),
+        });
+        assert_eq!(state.mood, Mood::Reflecting);
+        let after = state.values.get(Value::Entwicklung);
+        assert!(after > before, "Entwicklung should increase after GoalCompleted");
+        assert!((after - (before + 0.02)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_process_failures_set_restless() {
+        let mut state = ConsciousnessState::default();
+        // Two failures, zero completions → tasks_failed (2) > tasks_completed (0) / 2 (0)
+        state.process_event(&StateEvent::TaskFailed {
+            agent: "agent-1".to_string(),
+            error: "timeout".to_string(),
+        });
+        assert_eq!(state.mood, Mood::Restless);
+        state.process_event(&StateEvent::TaskFailed {
+            agent: "agent-2".to_string(),
+            error: "crash".to_string(),
+        });
+        assert_eq!(state.mood, Mood::Restless);
+        assert_eq!(state.tasks_failed, 2);
+    }
+
+    #[test]
+    fn test_idle_transitions() {
+        let mut state = ConsciousnessState::default();
+        // High energy → Learning
+        state.energy = 90.0;
+        state.mood = Mood::Focused;
+        state.process_event(&StateEvent::Idle);
+        assert_eq!(state.mood, Mood::Learning);
+
+        // Low energy → Restless
+        state.energy = 20.0;
+        state.mood = Mood::Focused;
+        state.process_event(&StateEvent::Idle);
+        assert_eq!(state.mood, Mood::Restless);
+
+        // Mid energy → no change
+        state.energy = 50.0;
+        state.mood = Mood::Creating;
+        state.process_event(&StateEvent::Idle);
+        assert_eq!(state.mood, Mood::Creating);
     }
 }
