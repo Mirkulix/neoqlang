@@ -122,6 +122,7 @@ pub fn build_app(
         .route("/api/providers/add", post(routes::providers::add_provider))
         .route("/api/providers/test", post(routes::providers::test_provider))
         .route("/api/providers/{id}/toggle", put(routes::providers::toggle_provider))
+        .route("/api/providers/{id}/edit", put(routes::providers::update_provider))
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
         .with_state(state.clone());
 

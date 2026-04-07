@@ -275,6 +275,60 @@ pub async fn toggle_provider(
     Ok(Json(serde_json::json!({ "id": id, "enabled": config.enabled })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateProviderRequest {
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+pub async fn update_provider(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let json = state
+        .store
+        .get_provider(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut config: qo_llm::ProviderConfig =
+        serde_json::from_str(&json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(api_key) = req.api_key {
+        config.api_key = api_key;
+    }
+    if let Some(model) = &req.model {
+        config.model = model.clone();
+        // Update cost from template
+        let templates = qo_llm::provider_templates();
+        if let Some(template) = templates.iter().find(|t| t.id == id) {
+            if let Some(m) = template.models.iter().find(|m| m.id == model.as_str()) {
+                config.cost_per_1k_tokens = m.cost_per_1k;
+            }
+        }
+    }
+    if let Some(enabled) = req.enabled {
+        config.enabled = enabled;
+    }
+
+    let updated_json =
+        serde_json::to_string(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .store
+        .save_provider(&id, &updated_json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "name": config.name,
+        "model": config.model,
+        "enabled": config.enabled,
+        "updated": true
+    })))
+}
+
 pub async fn delete_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

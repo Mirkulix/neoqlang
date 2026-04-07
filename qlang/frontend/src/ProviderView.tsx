@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Server, Plus, Trash2, Power, Zap, Key, Check, X } from 'lucide-react'
+import { Server, Plus, Trash2, Power, Zap, Key, Check, X, Edit3 } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -168,13 +168,20 @@ function ConfiguredCard({
   onToggle,
   onDelete,
   onTest,
+  onUpdate,
 }: {
   provider: ConfiguredProvider
   onToggle: (id: string) => void
   onDelete: (id: string) => void
   onTest: (id: string) => void
+  onUpdate: () => void
 }) {
   const [testing, setTesting] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editKey, setEditKey] = useState('')
+  const [editModel, setEditModel] = useState(provider.model)
+  const [showKey, setShowKey] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; latency_ms: number; message: string } | null>(null)
 
   const handleTest = async () => {
@@ -241,6 +248,65 @@ function ConfiguredCard({
         </div>
       )}
 
+      {editing && (
+        <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div>
+            <label className="label" style={{ display: 'block', marginBottom: '4px' }}>API Key</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                className="input"
+                type={showKey ? 'text' : 'password'}
+                value={editKey}
+                onChange={e => setEditKey(e.target.value)}
+                placeholder="Neuer API Key (leer = unverändert)"
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-ghost" style={{ minHeight: '36px', padding: '0 10px' }} onClick={() => setShowKey(k => !k)}>
+                {showKey ? <X size={14} /> : <Key size={14} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="label" style={{ display: 'block', marginBottom: '4px' }}>Modell</label>
+            <input
+              className="input"
+              value={editModel}
+              onChange={e => setEditModel(e.target.value)}
+              placeholder="Modell-ID"
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="btn btn-primary"
+              style={{ flex: 1, fontSize: '12px' }}
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true)
+                const body: Record<string, string> = {}
+                if (editKey) body.api_key = editKey
+                if (editModel !== provider.model) body.model = editModel
+                if (Object.keys(body).length > 0) {
+                  await fetch(`/api/providers/${provider.id}/edit`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                  })
+                }
+                setSaving(false)
+                setEditing(false)
+                setEditKey('')
+                onUpdate()
+              }}
+            >
+              <Check size={13} /> Speichern
+            </button>
+            <button className="btn btn-ghost" style={{ fontSize: '12px' }} onClick={() => { setEditing(false); setEditKey('') }}>
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
         <button
           className="btn-ghost"
@@ -254,10 +320,18 @@ function ConfiguredCard({
         <button
           className="btn-ghost"
           style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '12px' }}
+          onClick={() => { setEditing(e => !e); setEditModel(provider.model) }}
+        >
+          <Edit3 size={13} />
+          Bearbeiten
+        </button>
+        <button
+          className="btn-ghost"
+          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '12px' }}
           onClick={() => onToggle(provider.id)}
         >
           <Power size={13} />
-          {provider.enabled ? 'Deaktivieren' : 'Aktivieren'}
+          {provider.enabled ? 'Aus' : 'An'}
         </button>
         <button
           className="btn-ghost"
@@ -665,6 +739,7 @@ export default function ProviderView() {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onTest={() => {}}
+                onUpdate={fetchData}
               />
             ))}
           </div>
