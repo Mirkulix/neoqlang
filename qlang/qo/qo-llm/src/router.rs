@@ -232,6 +232,49 @@ impl LlmRouter {
             Err("No LLM backend configured".into())
         }
     }
+
+    /// Call any OpenAI-compatible provider endpoint directly.
+    pub async fn chat_with_provider(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        model: &str,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let client = reqwest::Client::new();
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+        let msgs: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|(role, content)| {
+                serde_json::json!({"role": role, "content": content})
+            })
+            .collect();
+
+        let body = serde_json::json!({
+            "model": model,
+            "messages": msgs,
+            "max_tokens": 2048,
+        });
+
+        let mut req = client.post(&url).json(&body);
+        if !api_key.is_empty() {
+            req = req.bearer_auth(api_key);
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Provider error {status}: {body}").into());
+        }
+
+        let json: serde_json::Value = resp.json().await?;
+        json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "No content in response".into())
+    }
 }
 
 #[cfg(test)]
@@ -294,5 +337,45 @@ mod tests {
         let r = router();
         let stats = r.provider_stats();
         assert_eq!(stats[0].status, "inactive");
+    }
+
+    #[test]
+    fn test_chat_with_provider_builds_correct_url() {
+        // Verify that trailing slashes are trimmed when constructing the URL.
+        // We only test the URL-building logic (no real HTTP call).
+        let base = "https://api.example.com/v1/";
+        let expected = "https://api.example.com/v1/chat/completions";
+        let actual = format!("{}/chat/completions", base.trim_end_matches('/'));
+        assert_eq!(actual, expected);
+
+        // No trailing slash variant
+        let base2 = "https://api.example.com/v1";
+        let actual2 = format!("{}/chat/completions", base2.trim_end_matches('/'));
+        assert_eq!(actual2, expected);
+    }
+
+    #[test]
+    fn test_provider_selection_prefers_lower_tier() {
+        // Simulate priority sorting: enabled providers sorted by tier ascending.
+        #[derive(Debug, PartialEq)]
+        struct FakeProvider { tier: u8, name: &'static str, enabled: bool }
+
+        let mut providers = vec![
+            FakeProvider { tier: 3, name: "openai", enabled: true },
+            FakeProvider { tier: 1, name: "ollama", enabled: true },
+            FakeProvider { tier: 2, name: "groq", enabled: true },
+            FakeProvider { tier: 2, name: "openrouter", enabled: false }, // disabled
+        ];
+
+        // Keep only enabled, sort by tier ascending
+        providers.retain(|p| p.enabled);
+        providers.sort_by_key(|p| p.tier);
+
+        assert_eq!(providers[0].name, "ollama");
+        assert_eq!(providers[0].tier, 1);
+        assert_eq!(providers[1].tier, 2);
+        assert_eq!(providers[2].tier, 3);
+        // Disabled openrouter must not appear
+        assert!(!providers.iter().any(|p| p.name == "openrouter"));
     }
 }

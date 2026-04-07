@@ -74,11 +74,52 @@ pub async fn chat(
         .unwrap_or_default()
         .as_millis() as u64;
 
-    let llm_response = state
-        .llm
-        .chat(messages)
-        .await
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // 1. Load user-configured providers from redb (enabled, sorted by tier ascending)
+    let mut configured: Vec<qo_llm::ProviderConfig> = state
+        .store
+        .list_providers()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(_, json)| serde_json::from_str::<qo_llm::ProviderConfig>(&json).ok())
+        .filter(|p| p.enabled)
+        .collect();
+    configured.sort_by_key(|p| p.tier);
+
+    // 2. Try each configured provider in tier order; first success wins
+    let mut provider_used = String::new();
+    let mut llm_response_opt: Option<String> = None;
+
+    for provider in &configured {
+        let base_url = provider.base_url.clone().unwrap_or_else(|| {
+            "https://api.openai.com/v1".to_string()
+        });
+        match state
+            .llm
+            .chat_with_provider(&base_url, &provider.api_key, &provider.model, messages.clone())
+            .await
+        {
+            Ok(resp) => {
+                provider_used = provider.id.clone();
+                llm_response_opt = Some(resp);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(provider = %provider.id, "configured provider failed: {e}");
+            }
+        }
+    }
+
+    // 3. Fall back to env-based router (Groq / Cloud)
+    let llm_response = if let Some(resp) = llm_response_opt {
+        resp
+    } else {
+        provider_used = "groq".to_string();
+        state
+            .llm
+            .chat(messages)
+            .await
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
 
     let llm_duration_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -113,7 +154,7 @@ pub async fn chat(
         let graph = graph_builders::build_chat_graph(
             &req.message,
             &response,
-            "groq",
+            &provider_used,
             llm_duration_ms,
         );
         if let Err(e) = state.graph_store.store(&graph) {
@@ -152,7 +193,7 @@ pub async fn chat(
 
     Ok(Json(ChatResponse {
         response,
-        tier: "groq".to_string(),
+        tier: provider_used,
     }))
 }
 
