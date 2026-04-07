@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const GRAPH_TABLE: TableDefinition<u64, &str> = TableDefinition::new("qlang_graphs");
+/// Stores raw QLBG binary blobs keyed by the same u64 IDs used in GRAPH_TABLE.
+const BINARY_GRAPHS_TABLE: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("qlang_binary_graphs");
 
 /// A stored QLANG execution graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,10 +81,11 @@ pub struct GraphStore {
 
 impl GraphStore {
     pub fn new(db: Arc<Database>) -> Result<Self, redb::Error> {
-        // Create table if not exists
+        // Create tables if not exists
         let write_txn = db.begin_write()?;
         {
             let _ = write_txn.open_table(GRAPH_TABLE)?;
+            let _ = write_txn.open_table(BINARY_GRAPHS_TABLE)?;
         }
         write_txn.commit()?;
 
@@ -167,6 +171,33 @@ impl GraphStore {
             })
             .take(limit)
             .collect())
+    }
+
+    // ----------------------------------------------------------------
+    // QLANG binary graph storage (.qlbg format)
+    // ----------------------------------------------------------------
+
+    /// Store a raw QLBG binary blob alongside its JSON metadata.
+    ///
+    /// `id` should be the same ID returned by [`Self::store`] so the two
+    /// representations can be cross-referenced.
+    pub fn store_binary_graph(&self, id: u64, binary: &[u8]) -> Result<(), redb::Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(BINARY_GRAPHS_TABLE)?;
+            table.insert(id, binary)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Retrieve a raw QLBG binary blob by ID.
+    ///
+    /// Returns `None` if no binary was stored for this ID.
+    pub fn get_binary_graph(&self, id: u64) -> Result<Option<Vec<u8>>, redb::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(BINARY_GRAPHS_TABLE)?;
+        Ok(table.get(id)?.map(|v| v.value().to_vec()))
     }
 }
 
