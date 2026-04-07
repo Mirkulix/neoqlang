@@ -30,6 +30,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Resolve paths relative to the binary location
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    // Binary is in target/release/ — project root is 2 levels up
+    let project_root = exe_dir.join("../../").canonicalize().unwrap_or_else(|_| PathBuf::from("."));
+
+    let static_dir = project_root.join("frontend/dist");
+    let static_dir = if static_dir.exists() {
+        Some(static_dir)
+    } else {
+        // Fallback: try relative to CWD
+        let cwd_static = PathBuf::from("frontend/dist");
+        if cwd_static.exists() { Some(cwd_static) } else { None }
+    };
+
     let config = qo_server::QoConfig {
         port: std::env::var("QO_PORT")
             .ok()
@@ -39,8 +56,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cloud_config,
         data_dir: PathBuf::from("data"),
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/Orbit"),
-        static_dir: Some(PathBuf::from("frontend/dist")),
+        static_dir,
     };
+
+    if config.static_dir.is_some() {
+        tracing::info!("Frontend: {:?}", config.static_dir.as_ref().unwrap());
+    } else {
+        tracing::warn!("Frontend not found! Build with: cd frontend && npm run build");
+    }
 
     let port = config.port;
     let (app, state) = qo_server::build_app(config).map_err(|e| format!("{e}"))?;
