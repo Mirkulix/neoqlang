@@ -4,6 +4,8 @@ use crate::{
     llm_node,
 };
 use qo_llm::LlmRouter;
+use qo_evolution::QuantumState;
+use qo_simulation::{predict, Scenario, Simulator, Strategy};
 use qlang_core::binary;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
@@ -308,8 +310,9 @@ pub async fn execute_goal_qlang(
         goal.subtasks[i].status = GoalStatus::InProgress;
         let goal_desc = goal.description.clone();
 
+        let values = qo_values::ValueScores::default();
         let t_sub = now_ms();
-        match llm_node::llm_reason(llm, agent_role, &goal_desc, &task_text).await {
+        match llm_node::agent_execute_with_tools(llm, agent_role, &goal_desc, &task_text, &values).await {
             Ok(result) => {
                 let sub_ms = now_ms() - t_sub;
                 goal.subtasks[i].result = Some(result);
@@ -445,7 +448,8 @@ pub async fn execute_subtask(
     let subtask_desc = goal.subtasks[index].description.clone();
     let assigned_to = goal.subtasks[index].assigned_to;
 
-    match llm_node::llm_reason(llm, assigned_to, &goal_desc, &subtask_desc).await {
+    let values = qo_values::ValueScores::default();
+    match llm_node::agent_execute_with_tools(llm, assigned_to, &goal_desc, &subtask_desc, &values).await {
         Ok(result) => {
             goal.subtasks[index].result = Some(result.clone());
             goal.subtasks[index].status = GoalStatus::Completed;
