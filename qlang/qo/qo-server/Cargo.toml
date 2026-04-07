@@ -1,0 +1,4 @@
+[package]
+name = "qo-server"
+version.workspace = true
+edition.workspace = true

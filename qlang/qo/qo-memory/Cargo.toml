@@ -1,0 +1,4 @@
+[package]
+name = "qo-memory"
+version.workspace = true
+edition.workspace = true

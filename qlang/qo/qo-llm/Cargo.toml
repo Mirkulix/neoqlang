@@ -1,0 +1,4 @@
+[package]
+name = "qo-llm"
+version.workspace = true
+edition.workspace = true
