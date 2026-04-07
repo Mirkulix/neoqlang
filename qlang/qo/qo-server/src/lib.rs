@@ -107,6 +107,10 @@ pub fn build_app(
         .route("/api/evolution/proposals/{id}/approve", post(routes::evolution::approve_proposal))
         .route("/api/evolution/proposals/{id}/reject", post(routes::evolution::reject_proposal))
         .route("/api/evolution/analyze", post(routes::evolution::analyze))
+        .route("/api/history", get(routes::history::get_history))
+        .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))
+        .route("/api/providers", get(routes::providers::list_providers))
+        .route("/api/providers/costs", get(routes::providers::cost_summary))
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {

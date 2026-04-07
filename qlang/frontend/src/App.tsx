@@ -4,6 +4,7 @@ import ConsciousnessView from './ConsciousnessView'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
 import EvolutionView from './EvolutionView'
+import ProviderView from './ProviderView'
 import ActivityFeed from './ActivityFeed'
 
 const globalStyles = `
@@ -14,13 +15,14 @@ const globalStyles = `
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 `
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'evolution'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution'
 
 const tabs: { id: Tab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'goals', label: 'Ziele' },
   { id: 'agents', label: 'Agenten' },
   { id: 'consciousness', label: 'Bewusstsein' },
+  { id: 'provider', label: 'Provider' },
   { id: 'evolution', label: 'Evolution' },
 ]
 
@@ -55,6 +57,7 @@ export default function App() {
       case 'goals':        return <GoalsView />
       case 'agents':       return <AgentsView />
       case 'consciousness': return <ConsciousnessView />
+      case 'provider':     return <ProviderView />
       case 'evolution':    return <EvolutionView />
     }
   }

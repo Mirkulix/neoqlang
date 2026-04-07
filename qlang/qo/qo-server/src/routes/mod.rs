@@ -4,3 +4,5 @@ pub mod consciousness;
 pub mod evolution;
 pub mod goals;
 pub mod health;
+pub mod history;
+pub mod providers;
