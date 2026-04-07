@@ -4,6 +4,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use qo_agents::AgentRegistry;
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_llm::LlmRouter;
 use qo_memory::{ObsidianBridge, Store};
@@ -18,6 +19,7 @@ pub struct AppState {
     pub consciousness: Mutex<ConsciousnessState>,
     pub stream: ConsciousnessStream,
     pub obsidian: ObsidianBridge,
+    pub agents: Mutex<AgentRegistry>,
 }
 
 pub struct QoConfig {
@@ -56,12 +58,15 @@ pub fn build_app(
     let stream = ConsciousnessStream::new(64);
     let consciousness = Mutex::new(ConsciousnessState::default());
 
+    let agents = Mutex::new(AgentRegistry::new());
+
     let state = Arc::new(AppState {
         llm,
         store,
         consciousness,
         stream,
         obsidian,
+        agents,
     });
 
     let api_router = Router::new()
@@ -76,6 +81,11 @@ pub fn build_app(
             "/api/consciousness/state",
             get(routes::consciousness::current_state),
         )
+        .route("/api/agents", get(routes::agents::list_agents))
+        .route("/api/agents/:role", get(routes::agents::get_agent))
+        .route("/api/goals", get(routes::goals::list_goals))
+        .route("/api/goals", post(routes::goals::create_goal))
+        .route("/api/goals/:id", get(routes::goals::get_goal))
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {

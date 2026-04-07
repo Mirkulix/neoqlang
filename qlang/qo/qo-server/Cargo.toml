@@ -5,6 +5,7 @@ edition.workspace = true
 description = "QO HTTP server — Axum routes + WebSocket + static files"
 
 [dependencies]
+qo-agents = { path = "../qo-agents" }
 qo-consciousness = { path = "../qo-consciousness" }
 qo-llm = { path = "../qo-llm" }
 qo-memory = { path = "../qo-memory" }

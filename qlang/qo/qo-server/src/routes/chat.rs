@@ -7,6 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
 
+fn looks_like_goal(msg: &str) -> bool {
+    let prefixes = [
+        "ziel:", "goal:", "mach:", "recherchiere", "plane", "baue",
+        "erstelle", "analysiere",
+    ];
+    let lower = msg.to_lowercase();
+    prefixes.iter().any(|p| lower.starts_with(p))
+}
+
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
@@ -25,16 +34,46 @@ pub async fn chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (axum::http::StatusCode, String)> {
+    // Detect goal-like messages and route them to the agent system
+    let goal_prefix = if looks_like_goal(&req.message) {
+        let goal_id = {
+            let mut registry = state.agents.lock().await;
+            let goal = registry.create_goal(req.message.clone());
+            goal.id
+        };
+
+        // Spawn background execution
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            let mut registry = state_clone.agents.lock().await;
+            if let Err(e) = registry.execute_goal(goal_id, &state_clone.llm).await {
+                tracing::warn!("Goal {} execution failed: {}", goal_id, e);
+            }
+        });
+
+        Some(format!(
+            "[Ziel #{} erstellt und wird von den Agenten bearbeitet.]\n\n",
+            goal_id
+        ))
+    } else {
+        None
+    };
+
     let messages = vec![
         ("system".to_string(), SYSTEM_PROMPT.to_string()),
         ("user".to_string(), req.message.clone()),
     ];
 
-    let response = state
+    let llm_response = state
         .llm
         .chat(messages)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let response = match goal_prefix {
+        Some(prefix) => format!("{}{}", prefix, llm_response),
+        None => llm_response,
+    };
 
     // Store in redb
     let id = SystemTime::now()

@@ -6,4 +6,4 @@ pub mod registry;
 
 pub use agent::{Agent, AgentRole, AgentStatus};
 pub use goal::{Goal, GoalStatus, SubTask};
-pub use registry::AgentRegistry;
+pub use registry::{AgentRegistry, AgentSummary};
