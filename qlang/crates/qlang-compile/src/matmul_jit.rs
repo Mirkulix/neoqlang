@@ -24,6 +24,49 @@ pub struct CompiledMatMul<'ctx> {
 
 type MatMulFn = unsafe extern "C" fn(*const f32, *const f32, *mut f32, u64, u64, u64);
 
+/// Helper to build a for-loop in LLVM IR
+fn build_for<'ctx, F>(
+    context: &'ctx Context,
+    builder: &inkwell::builder::Builder<'ctx>,
+    function: inkwell::values::FunctionValue<'ctx>,
+    name: &str,
+    start: inkwell::values::IntValue<'ctx>,
+    end: inkwell::values::IntValue<'ctx>,
+    step: inkwell::values::IntValue<'ctx>,
+    mut body: F,
+) where
+    F: FnMut(inkwell::values::IntValue<'ctx>),
+{
+    let pre_header = builder.get_insert_block().unwrap();
+    let loop_header = context.append_basic_block(function, &format!("{}_header", name));
+    let loop_body = context.append_basic_block(function, &format!("{}_body", name));
+    let loop_exit = context.append_basic_block(function, &format!("{}_exit", name));
+
+    builder.build_unconditional_branch(loop_header).unwrap();
+
+    // Header
+    builder.position_at_end(loop_header);
+    let phi = builder.build_phi(start.get_type(), name).unwrap();
+    phi.add_incoming(&[(&start, pre_header)]);
+    let i = phi.as_basic_value().into_int_value();
+    
+    let cond = builder.build_int_compare(inkwell::IntPredicate::ULT, i, end, &format!("{}_cond", name)).unwrap();
+    builder.build_conditional_branch(cond, loop_body, loop_exit).unwrap();
+
+    // Body
+    builder.position_at_end(loop_body);
+    body(i);
+
+    // Increment
+    let current_body_end = builder.get_insert_block().unwrap();
+    let next_i = builder.build_int_add(i, step, &format!("{}_next", name)).unwrap();
+    phi.add_incoming(&[(&next_i, current_body_end)]);
+    builder.build_unconditional_branch(loop_header).unwrap();
+
+    // Exit
+    builder.position_at_end(loop_exit);
+}
+
 /// Compile a matrix multiplication kernel via LLVM.
 pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError> {
     let module = context.create_module("qlang_matmul");
@@ -42,16 +85,31 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
 
     let function = module.add_function("qlang_matmul", fn_type, None);
 
+    let is_aarch64 = cfg!(target_arch = "aarch64");
+    let vec_len = if is_aarch64 { 4 } else { 8 };
+    let vec_len_u64 = vec_len as u64;
+
+    if is_aarch64 {
+        function.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            context.create_string_attribute("target-features", "+neon"),
+        );
+    } else {
+        function.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            context.create_string_attribute("target-features", "+avx2,+fma"),
+        );
+    }
+
+    let vec_f32_type = f32_type.vec_type(vec_len);
+    let zero_i64 = i64_type.const_int(0, false);
+    let one_i64 = i64_type.const_int(1, false);
+    let vec_step = i64_type.const_int(vec_len_u64, false);
+    let tile_size = i64_type.const_int(32, false);
+
     // Blocks
     let entry = context.append_basic_block(function, "entry");
-    let loop_i_header = context.append_basic_block(function, "loop_i");
-    let loop_j_header = context.append_basic_block(function, "loop_j");
-    let loop_k_header = context.append_basic_block(function, "loop_k");
-    let k_body = context.append_basic_block(function, "k_body");
-    let k_done = context.append_basic_block(function, "k_done");
-    let j_inc = context.append_basic_block(function, "j_inc");
-    let i_inc = context.append_basic_block(function, "i_inc");
-    let exit = context.append_basic_block(function, "exit");
+    builder.position_at_end(entry);
 
     let a_ptr = function.get_nth_param(0).unwrap().into_pointer_value();
     let b_ptr = function.get_nth_param(1).unwrap().into_pointer_value();
@@ -60,82 +118,85 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
     let k_param = function.get_nth_param(4).unwrap().into_int_value();
     let n_param = function.get_nth_param(5).unwrap().into_int_value();
 
-    let zero_i64 = i64_type.const_int(0, false);
-    let one_i64 = i64_type.const_int(1, false);
-    let zero_f32 = f32_type.const_float(0.0);
+    // i0 loop
+    build_for(context, &builder, function, "i0", zero_i64, m_param, tile_size, |i0| {
+        // k0 loop
+        build_for(context, &builder, function, "k0", zero_i64, k_param, tile_size, |k0| {
+            // j0 loop
+            build_for(context, &builder, function, "j0", zero_i64, n_param, tile_size, |j0| {
+                let i0_plus = builder.build_int_add(i0, tile_size, "").unwrap();
+                let c_i = builder.build_int_compare(inkwell::IntPredicate::ULT, i0_plus, m_param, "").unwrap();
+                let i_end = builder.build_select(c_i, i0_plus, m_param, "").unwrap().into_int_value();
 
-    // entry → loop_i
-    builder.position_at_end(entry);
-    builder.build_unconditional_branch(loop_i_header).unwrap();
+                build_for(context, &builder, function, "i", i0, i_end, one_i64, |i| {
+                    let k0_plus = builder.build_int_add(k0, tile_size, "").unwrap();
+                    let c_k = builder.build_int_compare(inkwell::IntPredicate::ULT, k0_plus, k_param, "").unwrap();
+                    let k_end = builder.build_select(c_k, k0_plus, k_param, "").unwrap().into_int_value();
 
-    // loop_i: i = phi(0, i+1); if i < M goto loop_j else exit
-    builder.position_at_end(loop_i_header);
-    let i_phi = builder.build_phi(i64_type, "i").unwrap();
-    i_phi.add_incoming(&[(&zero_i64, entry)]);
-    let i_val = i_phi.as_basic_value().into_int_value();
-    let cond_i = builder.build_int_compare(inkwell::IntPredicate::ULT, i_val, m_param, "ci").unwrap();
-    builder.build_conditional_branch(cond_i, loop_j_header, exit).unwrap();
+                    build_for(context, &builder, function, "k", k0, k_end, one_i64, |k| {
+                        let ik = builder.build_int_mul(i, k_param, "").unwrap();
+                        let a_idx = builder.build_int_add(ik, k, "").unwrap();
+                        let a_gep = unsafe { builder.build_gep(f32_type, a_ptr, &[a_idx], "").unwrap() };
+                        let a_val = builder.build_load(f32_type, a_gep, "av").unwrap().into_float_value();
 
-    // loop_j: j = phi(0, j+1); if j < N goto loop_k else i_inc
-    builder.position_at_end(loop_j_header);
-    let j_phi = builder.build_phi(i64_type, "j").unwrap();
-    j_phi.add_incoming(&[(&zero_i64, loop_i_header)]);
-    let j_val = j_phi.as_basic_value().into_int_value();
-    let cond_j = builder.build_int_compare(inkwell::IntPredicate::ULT, j_val, n_param, "cj").unwrap();
-    builder.build_conditional_branch(cond_j, loop_k_header, i_inc).unwrap();
+                        // Splat a_val
+                        let mut a_vec = vec_f32_type.get_undef();
+                        for v in 0..vec_len_u64 {
+                            let idx = context.i32_type().const_int(v, false);
+                            a_vec = builder.build_insert_element(a_vec, a_val, idx, "").unwrap();
+                        }
 
-    // loop_k: k = phi(0, k+1), sum = phi(0.0, new_sum); if k < K goto k_body else k_done
-    builder.position_at_end(loop_k_header);
-    let k_phi = builder.build_phi(i64_type, "k").unwrap();
-    k_phi.add_incoming(&[(&zero_i64, loop_j_header)]);
-    let sum_phi = builder.build_phi(f32_type, "sum").unwrap();
-    sum_phi.add_incoming(&[(&zero_f32, loop_j_header)]);
-    let k_val = k_phi.as_basic_value().into_int_value();
-    let sum_val = sum_phi.as_basic_value().into_float_value();
-    let cond_k = builder.build_int_compare(inkwell::IntPredicate::ULT, k_val, k_param, "ck").unwrap();
-    builder.build_conditional_branch(cond_k, k_body, k_done).unwrap();
+                        let j0_plus = builder.build_int_add(j0, tile_size, "").unwrap();
+                        let c_j = builder.build_int_compare(inkwell::IntPredicate::ULT, j0_plus, n_param, "").unwrap();
+                        let j_end = builder.build_select(c_j, j0_plus, n_param, "").unwrap().into_int_value();
 
-    // k_body: sum += A[i*K+k] * B[k*N+j]; k++; goto loop_k
-    builder.position_at_end(k_body);
-    let ik = builder.build_int_mul(i_val, k_param, "ik").unwrap();
-    let a_idx = builder.build_int_add(ik, k_val, "aidx").unwrap();
-    let a_gep = unsafe { builder.build_gep(f32_type, a_ptr, &[a_idx], "agep").unwrap() };
-    let a_val = builder.build_load(f32_type, a_gep, "av").unwrap().into_float_value();
+                        let j_len = builder.build_int_sub(j_end, j0, "").unwrap();
+                        let j_vecs = builder.build_int_unsigned_div(j_len, vec_step, "").unwrap();
+                        let j_vec_len = builder.build_int_mul(j_vecs, vec_step, "").unwrap();
+                        let j_vec_end = builder.build_int_add(j0, j_vec_len, "").unwrap();
 
-    let kn = builder.build_int_mul(k_val, n_param, "kn").unwrap();
-    let b_idx = builder.build_int_add(kn, j_val, "bidx").unwrap();
-    let b_gep = unsafe { builder.build_gep(f32_type, b_ptr, &[b_idx], "bgep").unwrap() };
-    let b_val = builder.build_load(f32_type, b_gep, "bv").unwrap().into_float_value();
+                        // Vector J loop
+                        build_for(context, &builder, function, "j_vec", j0, j_vec_end, vec_step, |j| {
+                            let kn = builder.build_int_mul(k, n_param, "").unwrap();
+                            let b_idx = builder.build_int_add(kn, j, "").unwrap();
+                            let b_gep = unsafe { builder.build_gep(f32_type, b_ptr, &[b_idx], "").unwrap() };
+                            let b_vec = builder.build_load(vec_f32_type, b_gep, "bv").unwrap().into_vector_value();
 
-    let prod = builder.build_float_mul(a_val, b_val, "prod").unwrap();
-    let new_sum = builder.build_float_add(sum_val, prod, "nsum").unwrap();
-    let k_next = builder.build_int_add(k_val, one_i64, "knxt").unwrap();
+                            let in_val = builder.build_int_mul(i, n_param, "").unwrap();
+                            let c_idx = builder.build_int_add(in_val, j, "").unwrap();
+                            let c_gep = unsafe { builder.build_gep(f32_type, c_ptr, &[c_idx], "").unwrap() };
+                            let c_vec = builder.build_load(vec_f32_type, c_gep, "cv").unwrap().into_vector_value();
 
-    k_phi.add_incoming(&[(&k_next, k_body)]);
-    sum_phi.add_incoming(&[(&new_sum, k_body)]);
-    builder.build_unconditional_branch(loop_k_header).unwrap();
+                            let prod = builder.build_float_mul(a_vec, b_vec, "").unwrap();
+                            // In LLVM, we can use llvm.fma.vNf32 but build_float_add is fine, LLVM optimizes it if +fma is enabled.
+                            let new_c = builder.build_float_add(c_vec, prod, "").unwrap();
+                            builder.build_store(c_gep, new_c).unwrap();
+                        });
 
-    // k_done: store C[i*N+j] = sum; goto j_inc
-    builder.position_at_end(k_done);
-    let in_val = builder.build_int_mul(i_val, n_param, "in").unwrap();
-    let c_idx = builder.build_int_add(in_val, j_val, "cidx").unwrap();
-    let c_gep = unsafe { builder.build_gep(f32_type, c_ptr, &[c_idx], "cgep").unwrap() };
-    builder.build_store(c_gep, sum_val).unwrap();
-    builder.build_unconditional_branch(j_inc).unwrap();
+                        // Scalar remainder J loop
+                        build_for(context, &builder, function, "j_sca", j_vec_end, j_end, one_i64, |j| {
+                            let kn = builder.build_int_mul(k, n_param, "").unwrap();
+                            let b_idx = builder.build_int_add(kn, j, "").unwrap();
+                            let b_gep = unsafe { builder.build_gep(f32_type, b_ptr, &[b_idx], "").unwrap() };
+                            let b_val = builder.build_load(f32_type, b_gep, "bvs").unwrap().into_float_value();
 
-    // j_inc: j++; goto loop_j
-    builder.position_at_end(j_inc);
-    let j_next = builder.build_int_add(j_val, one_i64, "jnxt").unwrap();
-    j_phi.add_incoming(&[(&j_next, j_inc)]);
-    builder.build_unconditional_branch(loop_j_header).unwrap();
+                            let in_val = builder.build_int_mul(i, n_param, "").unwrap();
+                            let c_idx = builder.build_int_add(in_val, j, "").unwrap();
+                            let c_gep = unsafe { builder.build_gep(f32_type, c_ptr, &[c_idx], "").unwrap() };
+                            let c_val = builder.build_load(f32_type, c_gep, "cvs").unwrap().into_float_value();
 
-    // i_inc: i++; goto loop_i
-    builder.position_at_end(i_inc);
-    let i_next = builder.build_int_add(i_val, one_i64, "inxt").unwrap();
-    i_phi.add_incoming(&[(&i_next, i_inc)]);
-    builder.build_unconditional_branch(loop_i_header).unwrap();
+                            let prod = builder.build_float_mul(a_val, b_val, "").unwrap();
+                            let new_c = builder.build_float_add(c_val, prod, "").unwrap();
+                            builder.build_store(c_gep, new_c).unwrap();
+                        });
+                    });
+                });
+            });
+        });
+    });
 
-    // exit
+    let exit = context.append_basic_block(function, "exit");
+    builder.build_unconditional_branch(exit).unwrap();
     builder.position_at_end(exit);
     builder.build_return(None).unwrap();
 

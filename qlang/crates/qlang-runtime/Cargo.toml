@@ -8,6 +8,7 @@ description = "QLANG runtime - Graph executor and scheduler"
 default = []
 gpu = ["wgpu", "pollster"]
 mlx = ["mlx-rs"]
+tls = ["rustls", "webpki-roots"]
 
 [dependencies]
 qlang-core = { workspace = true }
@@ -17,6 +18,8 @@ thiserror = { workspace = true }
 rayon = "1.10"
 wgpu = { version = "24", optional = true }
 pollster = { version = "0.4", optional = true }
+rustls = { version = "0.23", optional = true }
+webpki-roots = { version = "0.26", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mlx-rs = { version = "0.25", features = ["metal", "accelerate"], optional = true }

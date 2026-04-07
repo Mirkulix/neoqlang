@@ -177,6 +177,20 @@ pub fn execute(
                 node_outputs.insert((node_id, 0), result);
             }
 
+            Op::Exp => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_unaryop(&input, |x| x.exp(), "exp")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64;
+            }
+
+            Op::Log => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_unaryop(&input, |x| x.ln(), "log")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64;
+            }
+
             Op::Sub => {
                 let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
                 let result = tensor_binop(&a, &b, |x, y| x - y, "sub")?;
@@ -258,6 +272,100 @@ pub fn execute(
                 stats.quantum_ops += 1;
             }
 
+            Op::ToSparse { sparsity } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_to_sparse(&input, *sparsity)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::FisherMetric => {
+                let (model, data) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let result = tensor_fisher_metric(&model, &data)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Project { manifold } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_project(&input, manifold)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Collapse => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_collapse(&input)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::LayerNorm { eps } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_layer_norm(&input, *eps)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 4;
+            }
+
+            Op::Residual => {
+                let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let result = tensor_binop(&a, &b, |x, y| x + y, "residual")?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += a.shape.numel().unwrap_or(0) as u64;
+            }
+
+            Op::Gelu => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_gelu(&input)?;
+                node_outputs.insert((node_id, 0), result);
+                stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 8;
+            }
+
+            Op::Dropout { rate } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let result = tensor_dropout(&input, *rate)?;
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::Cond => {
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 3 {
+                    return Err(ExecutionError::MissingInput(node_id, "cond needs predicate, branch_a, branch_b".into()));
+                }
+                let predicate = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "predicate".into()))?;
+                let branch_a = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "branch_a".into()))?;
+                let branch_b = node_outputs
+                    .get(&(incoming[2].from_node, incoming[2].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "branch_b".into()))?;
+
+                let pred_val = predicate.as_f32_slice().unwrap_or_else(|| vec![0.0])[0];
+                let result = if pred_val > 0.5 { branch_a } else { branch_b };
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::Embedding { .. } => {
+                return Err(ExecutionError::UnsupportedOp("Embedding is currently not supported in executor Phase 1".into()));
+            }
+
+            Op::Attention { .. } => {
+                return Err(ExecutionError::UnsupportedOp("Attention is currently not supported in executor Phase 1".into()));
+            }
+
+            Op::Scan { .. } => {
+                return Err(ExecutionError::UnsupportedOp("Scan is currently not supported in executor Phase 1".into()));
+            }
+
+            Op::SubGraph { .. } => {
+                return Err(ExecutionError::UnsupportedOp("SubGraph is currently not supported in executor Phase 1".into()));
+            }
+
             Op::Entropy => {
                 let input = get_one_input(graph, node_id, &node_outputs)?;
                 let result = tensor_entropy(&input)?;
@@ -274,9 +382,46 @@ pub fn execute(
             }
 
             Op::Measure => {
-                let input = get_one_input(graph, node_id, &node_outputs)?;
-                // Measurement: collapse distribution to argmax
-                let result = tensor_measure(&input)?;
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.is_empty() {
+                    return Err(ExecutionError::MissingInput(node_id, "measure needs at least a state".into()));
+                }
+                let state = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "state".into()))?;
+
+                let result = if incoming.len() >= 2 {
+                    // Measurement with explicit operators: P(w|ρ) = Tr(ρ M_w)
+                    let operators = node_outputs
+                        .get(&(incoming[1].from_node, incoming[1].from_port))
+                        .cloned()
+                        .ok_or(ExecutionError::MissingInput(node_id, "operators".into()))?;
+                    tensor_measure_with_operators(&state, &operators)?
+                } else {
+                    // Measurement: collapse distribution to argmax
+                    tensor_measure(&state)?
+                };
+
+                node_outputs.insert((node_id, 0), result);
+                stats.quantum_ops += 1;
+            }
+
+            Op::Entangle => {
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 2 {
+                    return Err(ExecutionError::MissingInput(node_id, "entangle needs two states".into()));
+                }
+                let state_a = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "state_a".into()))?;
+                let state_b = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "state_b".into()))?;
+
+                let result = tensor_entangle(&state_a, &state_b)?;
                 node_outputs.insert((node_id, 0), result);
                 stats.quantum_ops += 1;
             }
@@ -291,10 +436,26 @@ pub fn execute(
                     .get(&(incoming[0].from_node, incoming[0].from_port))
                     .cloned()
                     .ok_or(ExecutionError::MissingInput(node_id, "state".into()))?;
-                let gradient = node_outputs
-                    .get(&(incoming[1].from_node, incoming[1].from_port))
-                    .cloned()
-                    .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
+                
+                // Op::Evolve takes 3 inputs (state, hamiltonian, gradient).
+                // If only 2 are provided, we assume they are state and gradient, and build hamiltonian dynamically.
+                let (hamiltonian_opt, gradient) = if incoming.len() >= 3 {
+                    let h = node_outputs
+                        .get(&(incoming[1].from_node, incoming[1].from_port))
+                        .cloned()
+                        .ok_or(ExecutionError::MissingInput(node_id, "hamiltonian".into()))?;
+                    let g = node_outputs
+                        .get(&(incoming[2].from_node, incoming[2].from_port))
+                        .cloned()
+                        .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
+                    (Some(h), g)
+                } else {
+                    let g = node_outputs
+                        .get(&(incoming[1].from_node, incoming[1].from_port))
+                        .cloned()
+                        .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
+                    (None, g)
+                };
 
                 let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
                 let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: gradient not f32".into()))?;
@@ -329,10 +490,18 @@ pub fn execute(
                         DensityMatrix { dim: n, eigenvalues, eigenvectors }
                     };
 
-                    // Construct a diagonal Hamiltonian from eigenvalue indices
-                    // (simplified Laplace-Beltrami: H = diag(0, 1, ..., n-1))
-                    let h_eigs: Vec<f64> = (0..n).map(|i| i as f64).collect();
-                    let hamiltonian = quantum_flow::construct_hamiltonian(n, &h_eigs);
+                    let hamiltonian = if let Some(h_tensor) = hamiltonian_opt {
+                        let vh = h_tensor.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: hamiltonian not f32".into()))?;
+                        if vh.len() != len {
+                            return Err(ExecutionError::RuntimeError("evolve: hamiltonian shape mismatch".into()));
+                        }
+                        vh.iter().map(|&x| x as f64).collect()
+                    } else {
+                        // Construct a diagonal Hamiltonian from eigenvalue indices
+                        // (simplified Laplace-Beltrami: H = diag(0, 1, ..., n-1))
+                        let h_eigs: Vec<f64> = (0..n).map(|i| i as f64).collect();
+                        quantum_flow::construct_hamiltonian(n, &h_eigs)
+                    };
 
                     // Build gradient as n×n matrix (natural gradient G⁻¹∇L).
                     // Symmetrise to keep density matrix Hermitian.
@@ -728,6 +897,106 @@ fn tensor_to_lowrank(a: &TensorData, rank: usize) -> Result<TensorData, Executio
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
+fn tensor_to_sparse(a: &TensorData, sparsity: f64) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "to_sparse: input not f32".into(),
+    ))?;
+
+    let mut values: Vec<f32> = va.iter().map(|x| x.abs()).collect();
+    values.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+
+    let k = ((va.len() as f64) * sparsity) as usize;
+    let threshold = if k < values.len() { values[k] } else { f32::MAX };
+
+    let mut result = vec![0.0f32; va.len()];
+    for i in 0..va.len() {
+        if va[i].abs() >= threshold {
+            result[i] = va[i];
+        }
+    }
+
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_fisher_metric(model: &TensorData, _data: &TensorData) -> Result<TensorData, ExecutionError> {
+    // Simplified Fisher Information Matrix calculation
+    // G = E[∇log p ∇log p^T]
+    // For Phase 1, we return an identity matrix of size n x n where n is the number of parameters.
+    use qlang_core::tensor::Shape;
+    let vm = model.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "fisher_metric: model not f32".into(),
+    ))?;
+
+    let n = vm.len();
+    let mut result = vec![0.0f32; n * n];
+    for i in 0..n {
+        result[i * n + i] = 1.0;
+    }
+    Ok(TensorData::from_f32(Shape::matrix(n, n), &result))
+}
+
+fn tensor_project(tensor: &TensorData, manifold: &qlang_core::ops::Manifold) -> Result<TensorData, ExecutionError> {
+    use qlang_core::ops::Manifold;
+    match manifold {
+        Manifold::Ternary => tensor_to_ternary(tensor),
+        Manifold::LowRank { max_rank } => tensor_to_lowrank(tensor, *max_rank),
+        Manifold::Sparse { max_nonzero } => {
+            let va = tensor.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "project: input not f32".into(),
+            ))?;
+            let sparsity = 1.0 - (*max_nonzero as f64 / va.len() as f64);
+            tensor_to_sparse(tensor, sparsity)
+        }
+        Manifold::Custom { .. } => Ok(tensor.clone()),
+    }
+}
+
+fn tensor_layer_norm(a: &TensorData, eps: f64) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "layer_norm: input not f32".into(),
+    ))?;
+    let mut result = vec![0.0f32; va.len()];
+
+    let n = va.len() as f32;
+    if n > 0.0 {
+        let mean: f32 = va.iter().sum::<f32>() / n;
+        let var: f32 = va.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n;
+        let std_dev = (var + eps as f32).sqrt();
+
+        for i in 0..va.len() {
+            result[i] = (va[i] - mean) / std_dev;
+        }
+    }
+
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_gelu(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "gelu: input not f32".into(),
+    ))?;
+    let mut result = vec![0.0f32; va.len()];
+
+    for i in 0..va.len() {
+        let x = va[i];
+        let inner = std::f32::consts::FRAC_2_PI.sqrt() * (x + 0.044715 * x * x * x);
+        result[i] = 0.5 * x * (1.0 + inner.tanh());
+    }
+
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_dropout(a: &TensorData, _rate: f64) -> Result<TensorData, ExecutionError> {
+    // For inference (Phase 1 executor), dropout is usually an identity operation
+    Ok(a.clone())
+}
+
+fn tensor_collapse(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    // For deterministic execution without random sampling, 
+    // collapse acts exactly like measurement (argmax).
+    tensor_measure(a)
+}
+
 /// Compute Shannon entropy of tensor values treated as probability distribution.
 fn tensor_entropy(a: &TensorData) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::Shape;
@@ -772,6 +1041,58 @@ fn tensor_measure(a: &TensorData) -> Result<TensorData, ExecutionError> {
     let mut result = vec![0.0f32; va.len()];
     result[max_idx] = 1.0;
     Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_measure_with_operators(state: &TensorData, operators: &TensorData) -> Result<TensorData, ExecutionError> {
+    let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "measure: state not f32".into(),
+    ))?;
+    let vo = operators.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "measure: operators not f32".into(),
+    ))?;
+
+    let len = vs.len();
+    if len == 0 || vo.len() % len != 0 {
+        return Err(ExecutionError::RuntimeError(
+            "measure: operators length must be a multiple of state length".into(),
+        ));
+    }
+    let num_ops = vo.len() / len;
+
+    let mut probs = vec![0.0f32; num_ops];
+    for i in 0..num_ops {
+        let op_slice = &vo[i * len..(i + 1) * len];
+        let mut sum = 0.0f32;
+        for (s, o) in vs.iter().zip(op_slice.iter()) {
+            sum += s * o;
+        }
+        probs[i] = sum;
+    }
+
+    use qlang_core::tensor::Shape;
+    Ok(TensorData::from_f32(Shape::vector(num_ops), &probs))
+}
+
+fn tensor_entangle(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input a not f32".into()))?;
+    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input b not f32".into()))?;
+    
+    let mut result = vec![0.0f32; va.len() * vb.len()];
+    for (i, &val_a) in va.iter().enumerate() {
+        for (j, &val_b) in vb.iter().enumerate() {
+            result[i * vb.len() + j] = val_a * val_b;
+        }
+    }
+    
+    use qlang_core::tensor::{Dim, Shape};
+    let shape = match (a.shape.0.as_slice(), b.shape.0.as_slice()) {
+        ([Dim::Fixed(m1), Dim::Fixed(n1)], [Dim::Fixed(m2), Dim::Fixed(n2)]) => {
+            Shape::matrix(m1 * m2, n1 * n2)
+        }
+        _ => Shape::vector(va.len() * vb.len()),
+    };
+    
+    Ok(TensorData::from_f32(shape, &result))
 }
 
 fn tensor_relu(a: &TensorData) -> Result<TensorData, ExecutionError> {
@@ -1205,5 +1526,81 @@ mod tests {
 
         // 3. Quantum op was counted
         assert_eq!(result.stats.quantum_ops, 1);
+    }
+
+    #[test]
+    fn execute_entangle() {
+        let mut g = Graph::new("test_entangle");
+        let ty_a = TensorType::f32_vector(2);
+        let ty_b = TensorType::f32_vector(3);
+        let ty_out = TensorType::f32_vector(6);
+
+        let node_a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![ty_a.clone()]);
+        let node_b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![ty_b.clone()]);
+        let entangle = g.add_node(Op::Entangle, vec![ty_a.clone(), ty_b.clone()], vec![ty_out.clone()]);
+        let out_node = g.add_node(Op::Output { name: "out".into() }, vec![ty_out.clone()], vec![]);
+
+        g.add_edge(node_a, 0, entangle, 0, ty_a.clone());
+        g.add_edge(node_b, 0, entangle, 1, ty_b.clone());
+        g.add_edge(entangle, 0, out_node, 0, ty_out.clone());
+
+        let mut inputs = HashMap::new();
+        inputs.insert("a".to_string(), TensorData::from_f32(Shape::vector(2), &[1.0, 2.0]));
+        inputs.insert("b".to_string(), TensorData::from_f32(Shape::vector(3), &[0.5, 1.5, 2.5]));
+
+        let result = execute(&g, inputs).unwrap();
+        let out_vals = result.outputs.get("out").unwrap().as_f32_slice().unwrap();
+
+        // Kronecker product: [1*0.5, 1*1.5, 1*2.5, 2*0.5, 2*1.5, 2*2.5]
+        assert_eq!(out_vals, &[0.5, 1.5, 2.5, 1.0, 3.0, 5.0]);
+    }
+
+    #[test]
+    fn execute_measure_1d() {
+        let mut g = Graph::new("test_measure");
+        let ty = TensorType::f32_vector(3);
+
+        let node_a = g.add_node(Op::Input { name: "state".into() }, vec![], vec![ty.clone()]);
+        let measure = g.add_node(Op::Measure, vec![ty.clone()], vec![ty.clone()]);
+        let out_node = g.add_node(Op::Output { name: "out".into() }, vec![ty.clone()], vec![]);
+
+        g.add_edge(node_a, 0, measure, 0, ty.clone());
+        g.add_edge(measure, 0, out_node, 0, ty.clone());
+
+        let mut inputs = HashMap::new();
+        inputs.insert("state".to_string(), TensorData::from_f32(Shape::vector(3), &[0.2, 0.8, 0.1]));
+
+        let result = execute(&g, inputs).unwrap();
+        let out_vals = result.outputs.get("out").unwrap().as_f32_slice().unwrap();
+
+        // Argmax should be at index 1
+        assert_eq!(out_vals, &[0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn execute_layer_norm() {
+        let mut g = Graph::new("test_layer_norm");
+        let ty = TensorType::f32_vector(4);
+
+        let node_a = g.add_node(Op::Input { name: "x".into() }, vec![], vec![ty.clone()]);
+        let ln = g.add_node(Op::LayerNorm { eps: 1e-5 }, vec![ty.clone()], vec![ty.clone()]);
+        let out_node = g.add_node(Op::Output { name: "out".into() }, vec![ty.clone()], vec![]);
+
+        g.add_edge(node_a, 0, ln, 0, ty.clone());
+        g.add_edge(ln, 0, out_node, 0, ty.clone());
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".to_string(), TensorData::from_f32(Shape::vector(4), &[1.0, 2.0, 3.0, 4.0]));
+
+        let result = execute(&g, inputs).unwrap();
+        let out_vals = result.outputs.get("out").unwrap().as_f32_slice().unwrap();
+
+        // Mean = 2.5, Variance = 1.25, StdDev = sqrt(1.25) ≈ 1.118
+        // Result = (x - 2.5) / 1.118
+        let std_dev = (1.25f32 + 1e-5).sqrt();
+        assert!((out_vals[0] - ((1.0 - 2.5) / std_dev)).abs() < 1e-4);
+        assert!((out_vals[1] - ((2.0 - 2.5) / std_dev)).abs() < 1e-4);
+        assert!((out_vals[2] - ((3.0 - 2.5) / std_dev)).abs() < 1e-4);
+        assert!((out_vals[3] - ((4.0 - 2.5) / std_dev)).abs() < 1e-4);
     }
 }

@@ -6,14 +6,14 @@ use crate::ops::Op;
 use crate::tensor::{Dtype, Shape};
 
 /// A constraint attached to a node or graph, with optional formal proof.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Constraint {
     pub kind: ConstraintKind,
     pub proof: Option<Proof>,
 }
 
 /// Types of constraints that can be verified.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConstraintKind {
     /// Output tensor shape must match exactly
     ShapeEquals { shape: Shape },
@@ -44,7 +44,7 @@ pub enum ConstraintKind {
 }
 
 /// A formal proof certificate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Proof {
     pub theorem: TheoremRef,
     pub status: ProofStatus,
@@ -52,7 +52,7 @@ pub struct Proof {
 }
 
 /// Reference to a theorem from the IGQK theory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TheoremRef {
     /// Theorem 5.1: Convergence of quantum gradient flow
     IgqkConvergence,

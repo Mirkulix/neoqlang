@@ -17,6 +17,7 @@
 pub mod compose;
 pub mod diff;
 pub mod distributed;
+pub mod kubernetes;
 pub mod emitter;
 pub mod negotiate;
 pub mod packages;

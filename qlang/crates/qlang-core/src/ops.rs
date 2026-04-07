@@ -21,6 +21,8 @@ pub enum Op {
     Mul,
     Div,
     Neg,
+    Exp,
+    Log,
     MatMul,
     Transpose,
     Reshape { target_shape: Vec<usize> },
@@ -112,7 +114,7 @@ impl Op {
     pub fn n_inputs(&self) -> usize {
         match self {
             Op::Input { .. } | Op::Constant => 0,
-            Op::Output { .. } | Op::Neg | Op::Relu | Op::Sigmoid | Op::Tanh
+            Op::Output { .. } | Op::Neg | Op::Exp | Op::Log | Op::Relu | Op::Sigmoid | Op::Tanh
             | Op::Softmax { .. } | Op::Transpose | Op::Reshape { .. }
             | Op::Slice { .. } | Op::ToTernary | Op::ToLowRank { .. }
             | Op::ToSparse { .. } | Op::Entropy | Op::Collapse
@@ -178,6 +180,8 @@ impl fmt::Display for Op {
             Op::Mul => write!(f, "mul"),
             Op::Div => write!(f, "div"),
             Op::Neg => write!(f, "neg"),
+            Op::Exp => write!(f, "exp"),
+            Op::Log => write!(f, "log"),
             Op::MatMul => write!(f, "matmul"),
             Op::Transpose => write!(f, "transpose"),
             Op::Reshape { target_shape } => write!(f, "reshape({target_shape:?})"),

@@ -97,6 +97,8 @@ const OP_OLLAMA_CHAT: u8 = 38;
 const OP_COND: u8 = 39;
 const OP_SCAN: u8 = 40;
 const OP_SUB_GRAPH: u8 = 41;
+const OP_EXP: u8 = 42;
+const OP_LOG: u8 = 43;
 
 // Dtype tags (reuse the same encoding from tensor.rs wire format)
 const DTYPE_F16: u8 = 0;
@@ -385,6 +387,8 @@ fn write_op(buf: &mut Vec<u8>, op: &Op) {
             buf.push(OP_SUB_GRAPH);
             write_string(buf, graph_id);
         }
+        Op::Exp => buf.push(OP_EXP),
+        Op::Log => buf.push(OP_LOG),
     }
 }
 
@@ -626,6 +630,8 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
             let graph_id = read_string(data, pos)?;
             Ok(Op::SubGraph { graph_id })
         }
+        OP_EXP => Ok(Op::Exp),
+        OP_LOG => Ok(Op::Log),
         _ => Err(BinaryError::InvalidOpTag(tag)),
     }
 }
@@ -820,6 +826,8 @@ mod tests {
             Op::Cond,
             Op::Scan { n_iterations: 10 },
             Op::SubGraph { graph_id: "sub1".into() },
+            Op::Exp,
+            Op::Log,
         ];
 
         for (i, op) in ops.iter().enumerate() {

@@ -570,6 +570,8 @@ fn op_to_onnx(op: &Op) -> Option<(String, HashMap<String, OnnxAttribute>)> {
         Op::Mul => "Mul",
         Op::Div => "Div",
         Op::Neg => "Neg",
+        Op::Exp => "Exp",
+        Op::Log => "Log",
         Op::MatMul => "MatMul",
         Op::Transpose => "Transpose",
         Op::Reshape { target_shape } => {

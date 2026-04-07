@@ -134,7 +134,7 @@ pub enum VmError {
     UndefinedFunction(String),
     TypeError(String),
     DivisionByZero,
-    IndexOutOfBounds { index: usize, len: usize },
+    IndexOutOfBounds { index: isize, len: usize },
     ArityMismatch { expected: usize, got: usize },
     ParseError(String),
     RuntimeError(String),
@@ -1575,10 +1575,11 @@ impl VmState {
                             Value::String(s) => s.clone(),
                             other => return Err(VmError::TypeError(format!("char_at() expects string, got {}", other.type_name()))),
                         };
-                        let idx = evaluated_args[1].as_number()? as usize;
+                        let idx_num = evaluated_args[1].as_number()?;
+                        let idx = idx_num as usize;
                         let chars: Vec<char> = s.chars().collect();
                         if idx >= chars.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: chars.len() });
+                            return Err(VmError::IndexOutOfBounds { index: idx_num as isize, len: chars.len() });
                         }
                         return Ok(Value::String(chars[idx].to_string()));
                     }
@@ -1999,11 +2000,18 @@ impl VmState {
             Expr::Index { array, index } => {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
+                let idx_num = idx_val.as_number()?;
+                if idx_num < 0.0 {
+                    return Err(VmError::IndexOutOfBounds {
+                        index: idx_num as isize,
+                        len: 0
+                    });
+                }
+                let idx = idx_num as usize;
                 match &arr_val {
                     Value::Array(arr) => {
-                        let idx = idx_val.as_number()? as usize;
                         if idx >= arr.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: arr.len() });
+                            return Err(VmError::IndexOutOfBounds { index: idx_num as isize, len: arr.len() });
                         }
                         Ok(Value::Number(arr[idx]))
                     }
@@ -2020,10 +2028,9 @@ impl VmState {
                         Err(VmError::RuntimeError(format!("key '{}' not found in dict", key)))
                     }
                     Value::String(s) => {
-                        let idx = idx_val.as_number()? as usize;
                         let chars: Vec<char> = s.chars().collect();
                         if idx >= chars.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: chars.len() });
+                            return Err(VmError::IndexOutOfBounds { index: idx_num as isize, len: chars.len() });
                         }
                         Ok(Value::String(chars[idx].to_string()))
                     }

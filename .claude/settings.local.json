@@ -53,7 +53,13 @@
       "Bash(export PATH=\"$HOME/.cargo/bin:/opt/homebrew/opt/llvm@18/bin:$PATH\")",
       "Bash(export LLVM_SYS_180_PREFIX=\"/opt/homebrew/opt/llvm@18\")",
       "Bash(export LIBRARY_PATH=\"/opt/homebrew/lib:$LIBRARY_PATH\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(tree -L 3 -d /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang --ignore \"target\")",
+      "Bash(wc -l /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang/crates/qlang-core/src/*.rs)",
+      "Bash(find /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang/crates/qlang-runtime/src -name \"*.rs\" -exec grep -l \"#\\\\[test\\\\]\" {})",
+      "Bash(grep -r \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\" /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang/crates/qlang-agent/src/*.rs)",
+      "Bash(find /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang/crates/qlang-runtime/src -name \"*.rs\" -exec grep -c \"#\\\\[test\\\\]\" {} +)",
+      "Bash(wc -l /Users/aleksandarbarisic/qlangEvolution/qlandTrae/qlang/crates/qlang-runtime/src/*.rs)"
     ],
     "deny": [],
     "ask": []

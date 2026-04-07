@@ -1019,12 +1019,13 @@ impl BytecodeVm {
                 OpCode::Index => {
                     let idx_val = self.stack.pop().unwrap();
                     let arr_val = self.stack.pop().unwrap();
+                    let idx_num = idx_val.as_number()?;
+                    let idx = idx_num as usize;
                     match &arr_val {
                         Value::Array(arr) => {
-                            let idx = idx_val.as_number()? as usize;
                             if idx >= arr.len() {
                                 return Err(VmError::IndexOutOfBounds {
-                                    index: idx,
+                                    index: idx_num as isize,
                                     len: arr.len(),
                                 });
                             }
@@ -1057,11 +1058,12 @@ impl BytecodeVm {
                             }
                         }
                         Value::String(s) => {
-                            let idx = idx_val.as_number()? as usize;
+                            let idx_num = idx_val.as_number()?;
+                            let idx = idx_num as usize;
                             let chars: Vec<char> = s.chars().collect();
                             if idx >= chars.len() {
                                 return Err(VmError::IndexOutOfBounds {
-                                    index: idx,
+                                    index: idx_num as isize,
                                     len: chars.len(),
                                 });
                             }
@@ -1493,12 +1495,13 @@ impl BytecodeVm {
                 OpCode::Index => {
                     let idx_val = self.stack.pop().unwrap();
                     let arr_val = self.stack.pop().unwrap();
+                    let idx_num = idx_val.as_number()?;
+                    let idx = idx_num as usize;
                     match &arr_val {
                         Value::Array(arr) => {
-                            let idx = idx_val.as_number()? as usize;
                             if idx >= arr.len() {
                                 return Err(VmError::IndexOutOfBounds {
-                                    index: idx,
+                                    index: idx_num as isize,
                                     len: arr.len(),
                                 });
                             }
@@ -1531,11 +1534,12 @@ impl BytecodeVm {
                             }
                         }
                         Value::String(s) => {
-                            let idx = idx_val.as_number()? as usize;
+                            let idx_num = idx_val.as_number()?;
+                            let idx = idx_num as usize;
                             let chars: Vec<char> = s.chars().collect();
                             if idx >= chars.len() {
                                 return Err(VmError::IndexOutOfBounds {
-                                    index: idx,
+                                    index: idx_num as isize,
                                     len: chars.len(),
                                 });
                             }

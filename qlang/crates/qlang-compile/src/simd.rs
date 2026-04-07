@@ -20,11 +20,15 @@ pub fn compile_graph_simd<'ctx>(
     let module = context.create_module(&format!("{}_simd", graph.id));
     let builder = context.create_builder();
 
+    let is_aarch64 = cfg!(target_arch = "aarch64");
+    let vec_len = if is_aarch64 { 4 } else { 8 };
+    let vec_len_u64 = vec_len as u64;
+
     let f32_type = context.f32_type();
     let f32_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
     let i64_type = context.i64_type();
     let void_type = context.void_type();
-    let vec8_f32_type = f32_type.vec_type(8);
+    let vec_f32_type = f32_type.vec_type(vec_len);
 
     let fn_type = void_type.fn_type(
         &[f32_ptr_type.into(), f32_ptr_type.into(), f32_ptr_type.into(), i64_type.into()],
@@ -32,10 +36,17 @@ pub fn compile_graph_simd<'ctx>(
     );
 
     let function = module.add_function("qlang_graph", fn_type, None);
-    function.add_attribute(
-        inkwell::attributes::AttributeLoc::Function,
-        context.create_string_attribute("target-features", "+avx2,+fma"),
-    );
+    if is_aarch64 {
+        function.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            context.create_string_attribute("target-features", "+neon"),
+        );
+    } else {
+        function.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            context.create_string_attribute("target-features", "+avx2,+fma"),
+        );
+    }
 
     let entry_block = context.append_basic_block(function, "entry");
     let vector_loop = context.append_basic_block(function, "vector_loop");
@@ -55,14 +66,14 @@ pub fn compile_graph_simd<'ctx>(
         .map(|n| &n.op)
         .collect();
 
-    let eight = i64_type.const_int(8, false);
+    let step = i64_type.const_int(vec_len_u64, false);
     let zero = i64_type.const_int(0, false);
     let one = i64_type.const_int(1, false);
 
-    // Entry: compute n_vector_elems = (n / 8) * 8
+    // Entry: compute n_vector_elems = (n / vec_len) * vec_len
     builder.position_at_end(entry_block);
-    let n_vectors = builder.build_int_unsigned_div(n, eight, "n_vec").unwrap();
-    let n_vector_elems = builder.build_int_mul(n_vectors, eight, "n_vec_elems").unwrap();
+    let n_vectors = builder.build_int_unsigned_div(n, step, "n_vec").unwrap();
+    let n_vector_elems = builder.build_int_mul(n_vectors, step, "n_vec_elems").unwrap();
     builder.build_unconditional_branch(vector_loop).unwrap();
 
     // === Vector loop header ===
@@ -74,22 +85,22 @@ pub fn compile_graph_simd<'ctx>(
     let vec_cond = builder.build_int_compare(inkwell::IntPredicate::ULT, vec_i_val, n_vector_elems, "vc").unwrap();
     builder.build_conditional_branch(vec_cond, vector_body, scalar_loop).unwrap();
 
-    // === Vector body: load <8 x float>, compute, store ===
+    // === Vector body: load <N x float>, compute, store ===
     builder.position_at_end(vector_body);
 
     let a_base = unsafe { builder.build_gep(f32_type, input_a, &[vec_i_val], "a_b").unwrap() };
-    let a_vec = builder.build_load(vec8_f32_type, a_base, "av").unwrap().into_vector_value();
+    let a_vec = builder.build_load(vec_f32_type, a_base, "av").unwrap().into_vector_value();
 
     let b_base = unsafe { builder.build_gep(f32_type, input_b, &[vec_i_val], "b_b").unwrap() };
-    let b_vec = builder.build_load(vec8_f32_type, b_base, "bv").unwrap().into_vector_value();
+    let b_vec = builder.build_load(vec_f32_type, b_base, "bv").unwrap().into_vector_value();
 
     // Apply vector ops
-    let result_vec = emit_vector_ops(&builder, &context, &ops, a_vec, b_vec)?;
+    let result_vec = emit_vector_ops(&builder, &context, &module, &ops, a_vec, b_vec, vec_len)?;
 
     let out_base = unsafe { builder.build_gep(f32_type, output, &[vec_i_val], "o_b").unwrap() };
     builder.build_store(out_base, result_vec).unwrap();
 
-    let vec_next = builder.build_int_add(vec_i_val, eight, "vn").unwrap();
+    let vec_next = builder.build_int_add(vec_i_val, step, "vn").unwrap();
     vec_i.add_incoming(&[(&vec_next, vector_body)]);
     builder.build_unconditional_branch(vector_loop).unwrap();
 
@@ -108,7 +119,7 @@ pub fn compile_graph_simd<'ctx>(
     let b_ptr = unsafe { builder.build_gep(f32_type, input_b, &[sc_i_val], "bs").unwrap() };
     let b_val = builder.build_load(f32_type, b_ptr, "bv").unwrap().into_float_value();
 
-    let sc_result = crate::codegen::emit_ops(&builder, &context, &ops, a_val, b_val)?;
+    let sc_result = crate::codegen::emit_ops(&builder, &context, &module, &ops, a_val, b_val)?;
 
     let out_ptr = unsafe { builder.build_gep(f32_type, output, &[sc_i_val], "os").unwrap() };
     builder.build_store(out_ptr, sc_result).unwrap();
@@ -134,16 +145,38 @@ pub fn compile_graph_simd<'ctx>(
     })
 }
 
-/// Emit vector operations on <8 x float>.
+/// Emit vector operations on <N x float>.
 fn emit_vector_ops<'ctx>(
     builder: &Builder<'ctx>,
     context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
     ops: &[&Op],
     a: inkwell::values::VectorValue<'ctx>,
     b: inkwell::values::VectorValue<'ctx>,
+    vec_len: u32,
 ) -> Result<inkwell::values::VectorValue<'ctx>, CodegenError> {
-    let vec8_type = context.f32_type().vec_type(8);
+    let vec_type = context.f32_type().vec_type(vec_len);
     let mut current = a;
+
+    let build_intrinsic = |name: &str, val: inkwell::values::VectorValue<'ctx>| {
+        let intrinsic_name = format!("{}.v{}f32", name, vec_len);
+        let fn_val = module.get_function(&intrinsic_name).unwrap_or_else(|| {
+            let fn_type = vec_type.fn_type(&[vec_type.into()], false);
+            module.add_function(&intrinsic_name, fn_type, None)
+        });
+        builder.build_call(fn_val, &[val.into()], "").unwrap().try_as_basic_value().left().unwrap().into_vector_value()
+    };
+
+    let build_splat = |val: f32| {
+        let mut v = vec_type.get_undef();
+        let i32_type = context.i32_type();
+        let c = context.f32_type().const_float(val as f64);
+        for i in 0..vec_len as u64 {
+            let idx = i32_type.const_int(i, false);
+            v = builder.build_insert_element(v, c, idx, "").unwrap();
+        }
+        v
+    };
 
     for op in ops {
         current = match op {
@@ -153,8 +186,48 @@ fn emit_vector_ops<'ctx>(
             Op::Div => builder.build_float_div(current, b, "vdiv").unwrap(),
             Op::Neg => builder.build_float_neg(current, "vneg").unwrap(),
 
+            Op::Exp => build_intrinsic("llvm.exp", current),
+            Op::Log => build_intrinsic("llvm.log", current),
+            
+            Op::Tanh => {
+                // tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
+                let two = build_splat(2.0);
+                let one = build_splat(1.0);
+                let two_x = builder.build_float_mul(two, current, "two_x").unwrap();
+                let exp_2x = build_intrinsic("llvm.exp", two_x);
+                let num = builder.build_float_sub(exp_2x, one, "num").unwrap();
+                let den = builder.build_float_add(exp_2x, one, "den").unwrap();
+                builder.build_float_div(num, den, "vtanh").unwrap()
+            }
+
+            Op::Gelu => {
+                // GELU: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+                let half = build_splat(0.5);
+                let one = build_splat(1.0);
+                let sqrt_2_pi = build_splat((2.0f32 / std::f32::consts::PI).sqrt());
+                let coeff = build_splat(0.044715);
+
+                let x_sq = builder.build_float_mul(current, current, "x_sq").unwrap();
+                let x_cb = builder.build_float_mul(x_sq, current, "x_cb").unwrap();
+                let c_x_cb = builder.build_float_mul(coeff, x_cb, "c_x_cb").unwrap();
+                let inner = builder.build_float_add(current, c_x_cb, "inner").unwrap();
+                let scaled = builder.build_float_mul(sqrt_2_pi, inner, "scaled").unwrap();
+                
+                // tanh
+                let two = build_splat(2.0);
+                let two_x_tanh = builder.build_float_mul(two, scaled, "two_x_tanh").unwrap();
+                let exp_2x_tanh = build_intrinsic("llvm.exp", two_x_tanh);
+                let num_tanh = builder.build_float_sub(exp_2x_tanh, one, "num_tanh").unwrap();
+                let den_tanh = builder.build_float_add(exp_2x_tanh, one, "den_tanh").unwrap();
+                let tanh_val = builder.build_float_div(num_tanh, den_tanh, "tanh_val").unwrap();
+
+                let one_plus_tanh = builder.build_float_add(one, tanh_val, "one_plus_tanh").unwrap();
+                let half_x = builder.build_float_mul(half, current, "half_x").unwrap();
+                builder.build_float_mul(half_x, one_plus_tanh, "vgelu").unwrap()
+            }
+
             Op::Relu => {
-                let zero_vec = vec8_type.const_zero();
+                let zero_vec = vec_type.const_zero();
                 let cmp = builder
                     .build_float_compare(inkwell::FloatPredicate::OGT, current, zero_vec, "vrc")
                     .unwrap();
@@ -164,7 +237,7 @@ fn emit_vector_ops<'ctx>(
             Op::ToTernary => {
                 // Build splat constants using the vector type
                 let f32_t = context.f32_type();
-                let pos_thresh = vec8_type.const_zero(); // will be replaced
+                let pos_thresh = vec_type.const_zero(); // will be replaced
                 let _ = pos_thresh;
 
                 // Use splat: create scalar then broadcast
@@ -174,15 +247,15 @@ fn emit_vector_ops<'ctx>(
                 let neg1_c = f32_t.const_float(-1.0);
                 let zero_c = f32_t.const_float(0.0);
 
-                // Build splat vectors by inserting same value 8 times
-                let mut pos_v = vec8_type.get_undef();
-                let mut neg_v = vec8_type.get_undef();
-                let mut one_v = vec8_type.get_undef();
-                let mut neg1_v = vec8_type.get_undef();
-                let mut zero_v = vec8_type.get_undef();
+                // Build splat vectors by inserting same value N times
+                let mut pos_v = vec_type.get_undef();
+                let mut neg_v = vec_type.get_undef();
+                let mut one_v = vec_type.get_undef();
+                let mut neg1_v = vec_type.get_undef();
+                let mut zero_v = vec_type.get_undef();
 
                 let i32_type = context.i32_type();
-                for i in 0..8u64 {
+                for i in 0..vec_len as u64 {
                     let idx = i32_type.const_int(i, false);
                     pos_v = builder.build_insert_element(pos_v, p3, idx, "").unwrap();
                     neg_v = builder.build_insert_element(neg_v, n3, idx, "").unwrap();
@@ -236,8 +309,10 @@ mod tests {
 
         let context = Context::create();
         let compiled = compile_graph_simd(&context, &g).unwrap();
-        assert!(compiled.llvm_ir.contains("<8 x float>"));
-        assert!(compiled.llvm_ir.contains("fadd <8 x float>"));
+        let is_aarch64 = cfg!(target_arch = "aarch64");
+        let vec_str = if is_aarch64 { "<4 x float>" } else { "<8 x float>" };
+        assert!(compiled.llvm_ir.contains(vec_str));
+        assert!(compiled.llvm_ir.contains(&format!("fadd {}", vec_str)));
     }
 
     // Execution tests require aligned memory — skipped until Phase 5
@@ -256,7 +331,9 @@ mod tests {
         let context = Context::create();
         let compiled = compile_graph_simd(&context, &g).unwrap();
 
-        assert!(compiled.llvm_ir.contains("<8 x float>"));
+        let is_aarch64 = cfg!(target_arch = "aarch64");
+        let vec_str = if is_aarch64 { "<4 x float>" } else { "<8 x float>" };
+        assert!(compiled.llvm_ir.contains(vec_str));
 
         let a_data: Vec<f32> = (0..16).map(|i| i as f32).collect();
         let b_data: Vec<f32> = (0..16).map(|i| (i * 10) as f32).collect();

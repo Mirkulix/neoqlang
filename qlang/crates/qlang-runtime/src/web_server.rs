@@ -630,9 +630,48 @@ fn handle_connection(mut stream: TcpStream, clients: Clients, web_root: &str) {
         return;
     }
 
-    // Regular HTTP file serving
+    // Regular HTTP file serving and minimal API
     if method != "GET" {
+        // Minimal API endpoint to save provider keys
+        if method == "POST" && path == "/api/config/providers" {
+            let len = headers.get("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+            let mut body = vec![0u8; len];
+            if len > 0 {
+                let _ = stream.read_exact(&mut body);
+            }
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&body) {
+                let manifest = env!("CARGO_MANIFEST_DIR");
+                let workspace_root = std::path::Path::new(manifest).parent()
+                    .and_then(|p| p.parent())
+                    .unwrap_or(std::path::Path::new("."));
+                let dir = workspace_root.join("data").join("config");
+                let _ = std::fs::create_dir_all(&dir);
+                let path = dir.join("providers.json");
+                let _ = std::fs::write(&path, serde_json::to_string_pretty(&val).unwrap_or_else(|_| "{}".to_string()));
+                send_http_response(&mut stream, 200, "OK", "application/json", br#"{"ok":true}"#);
+                return;
+            } else {
+                send_http_response(&mut stream, 400, "Bad Request", "application/json", br#"{"ok":false,"error":"invalid json"}"#);
+                return;
+            }
+        }
         send_404(&mut stream);
+        return;
+    }
+
+    // GET API endpoints
+    if path == "/api/config/providers" {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let workspace_root = std::path::Path::new(manifest).parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(std::path::Path::new("."));
+        let config_path = workspace_root.join("data").join("config").join("providers.json");
+        let body = if config_path.exists() {
+            std::fs::read_to_string(&config_path).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            "{}".to_string()
+        };
+        send_http_response(&mut stream, 200, "OK", "application/json", body.as_bytes());
         return;
     }
 
@@ -732,7 +771,7 @@ fn handle_websocket(
                             Some("predict") => {
                                 // Interactive model testing: receive 784 pixels, return prediction
                                 let pixels: Vec<f32> = msg["pixels"].as_array()
-                                    .map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+                                    .map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect::<Vec<f32>>())
                                     .unwrap_or_default();
 
                                 if pixels.len() == 784 {
@@ -847,6 +886,13 @@ fn handle_websocket(
                                 let data_source = msg["data"].as_str().unwrap_or("quick").to_string();
                                 eprintln!("[web_server] -> start_swarm (pop={}, gen={}, data={})", population, generations, data_source);
                                 run_swarm_training(population, generations, &data_source, clients);
+                            }
+                            Some("start_self_healing") => {
+                                eprintln!("[web_server] -> start_self_healing request!");
+                                let task = msg["task"].as_str().unwrap_or("Write a script that prints numbers 1 to 5").to_string();
+                                let model = msg["model"].as_str().unwrap_or("deepseek-r1:1.5b").to_string();
+                                let max_iterations = msg["max_iterations"].as_u64().unwrap_or(5) as usize;
+                                run_self_healing_loop(&task, &model, max_iterations, clients);
                             }
                             Some("start_autonomous") => {
                                 let task = msg["task"].as_str().unwrap_or("Build a digit classifier").to_string();
@@ -1275,6 +1321,133 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
 }
 
 // ---------------------------------------------------------------------------
+// Self-Healing QLANG Agent Loop
+// ---------------------------------------------------------------------------
+
+fn run_self_healing_loop(
+    task: &str,
+    model: &str,
+    max_iterations: usize,
+    clients: &Clients,
+) {
+    let clients = Arc::clone(clients);
+    let task = task.to_string();
+    let model = model.to_string();
+
+    thread::spawn(move || {
+        let ollama = crate::ollama::OllamaClient::from_env();
+        let mut history: Vec<String> = Vec::new();
+
+        eprintln!("[self_healing] ==============================");
+        eprintln!("[self_healing] Starting Self-Healing QLANG Loop");
+        eprintln!("[self_healing] Task: {}", task);
+        eprintln!("[self_healing] Model: {}", model);
+        eprintln!("[self_healing] ==============================");
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"system","text":"🚀 Self-Healing Agent gestartet. Ziel: {}"}}"#,
+            json_escape(&task)
+        ));
+
+        for iteration in 1..=max_iterations {
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"pipeline_status","step":{},"total_steps":{},"description":"Iteration {}: Generiere QLANG Code..."}}"#,
+                iteration, max_iterations, iteration
+            ));
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"agent_thinking","agent":"Coder","model":"{}","status":"thinking"}}"#,
+                json_escape(&model)
+            ));
+
+            let prompt = if iteration == 1 {
+                format!(
+                    "You are an expert QLANG programmer. Task: {}. Write a complete, valid QLANG script to solve this. \n\nQLANG supports:\n- Variables: `let x: int = 5`\n- Math: `+`, `-`, `*`, `/`, `**`\n- Functions: `fn add(a, b) {{ return a + b }}`\n- Graphs: `graph my_net {{ input x: f32[4]; node r = relu(x); output y = r }}`\n- Execution: `let out = run_graph(\"my_net\", {{\"x\": [1.0, 2.0, 3.0, 4.0]}})`\n- Printing: `print(out)`\n\nReturn ONLY the QLANG code inside ```qlang ... ``` blocks. Do not use Python.",
+                    task
+                )
+            } else {
+                format!(
+                    "You are an expert QLANG programmer. Task: {}.\n\nYour previous code failed with this error:\n{}\n\nPlease fix the code and return the corrected version inside ```qlang ... ``` blocks.",
+                    task,
+                    history.last().unwrap()
+                )
+            };
+
+            let response = ollama.generate(&model, &prompt, None).unwrap_or_default();
+            
+            // Extract code from ```qlang ... ``` or ``` ... ```
+            let code = if let Some(start) = response.find("```qlang") {
+                let rest = &response[start + 8..];
+                if let Some(end) = rest.find("```") {
+                    rest[..end].trim().to_string()
+                } else {
+                    rest.trim().to_string()
+                }
+            } else if let Some(start) = response.find("```") {
+                let rest = &response[start + 3..];
+                if let Some(end) = rest.find("```") {
+                    rest[..end].trim().to_string()
+                } else {
+                    rest.trim().to_string()
+                }
+            } else {
+                response.trim().to_string()
+            };
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"agent_response","agent":"Coder","model":"{}","response":"{}"}}"#,
+                json_escape(&model), json_escape(&code)
+            ));
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"system","text":"⚙️ Führe generierten Code aus..."}}"#
+            ));
+
+            // Execute the code
+            let start = std::time::Instant::now();
+            match crate::unified::execute_unified(&code) {
+                Ok(result) => {
+                    let elapsed = start.elapsed();
+                    let _out_str = result.output.join("\n");
+                    broadcast_to_clients(&clients, &format!(
+                        r#"{{"type":"exec_result","output":{},"error":null,"backend":"interpreter","time_ms":{}}}"#,
+                        serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".into()),
+                        elapsed.as_millis()
+                    ));
+                    broadcast_to_clients(&clients, &format!(
+                        r#"{{"type":"system","text":"✅ ERFOLG in Iteration {}! Code wurde fehlerfrei ausgeführt."}}"#,
+                        iteration
+                    ));
+                    broadcast_to_clients(&clients, r#"{"type":"self_healing_done"}"#);
+                    eprintln!("[self_healing] Success on iteration {}.", iteration);
+                    break;
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    broadcast_to_clients(&clients, &format!(
+                        r#"{{"type":"exec_result","output":[],"error":"{}","backend":"interpreter","time_ms":0}}"#,
+                        json_escape(&err_msg)
+                    ));
+                    broadcast_to_clients(&clients, &format!(
+                        r#"{{"type":"system","text":"❌ FEHLER in Iteration {}: {}"}}"#,
+                        iteration, json_escape(&err_msg)
+                    ));
+                    eprintln!("[self_healing] Error on iteration {}: {}", iteration, err_msg);
+                    history.push(err_msg);
+
+                    if iteration == max_iterations {
+                        broadcast_to_clients(&clients, &format!(
+                            r#"{{"type":"system","text":"🚨 FEHLER: Maximale Iterationen ({}) erreicht. Code konnte nicht repariert werden."}}"#,
+                            max_iterations
+                        ));
+                        broadcast_to_clients(&clients, r#"{"type":"self_healing_done"}"#);
+                    }
+                }
+            }
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Autonomous AI feedback loop
 // ---------------------------------------------------------------------------
 
@@ -1368,9 +1541,9 @@ fn run_autonomous_loop(
             let parsed: serde_json::Value = serde_json::from_str(&json_str)
                 .unwrap_or(serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}));
 
-            let h1 = parsed["hidden1"].as_u64().unwrap_or(128).min(512).max(16) as usize;
-            let h2 = parsed["hidden2"].as_u64().unwrap_or(64).min(256).max(8) as usize;
-            let epochs = parsed["epochs"].as_u64().unwrap_or(10).min(30).max(3) as usize;
+            let h1 = parsed["hidden1"].as_u64().unwrap_or(128).clamp(16, 512) as usize;
+            let h2 = parsed["hidden2"].as_u64().unwrap_or(64).clamp(8, 256) as usize;
+            let epochs = parsed["epochs"].as_u64().unwrap_or(10).clamp(3, 30) as usize;
             let lr = parsed["learning_rate"].as_f64().unwrap_or(0.1).min(1.0).max(0.001) as f32;
 
             eprintln!("[autonomous] Design: 784->{}->{}->10, {} epochs, lr={}", h1, h2, epochs, lr);

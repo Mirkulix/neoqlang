@@ -136,7 +136,7 @@ pub fn compile_graph<'ctx>(
         .into_float_value();
 
     // Apply operation(s) from the graph
-    let result_val = emit_ops(&builder, &context, &ops, a_val, b_val)?;
+    let result_val = emit_ops(&builder, &context, &module, &ops, a_val, b_val)?;
 
     // Store result[i]
     let out_elem_ptr = unsafe {
@@ -177,11 +177,22 @@ pub fn compile_graph<'ctx>(
 pub fn emit_ops<'ctx>(
     builder: &Builder<'ctx>,
     context: &'ctx Context,
+    module: &Module<'ctx>,
     ops: &[&Op],
     a: FloatValue<'ctx>,
     b: FloatValue<'ctx>,
 ) -> Result<FloatValue<'ctx>, CodegenError> {
     let mut current = a;
+
+    let build_intrinsic = |name: &str, val: FloatValue<'ctx>| {
+        let intrinsic_name = format!("{}.f32", name);
+        let f32_type = context.f32_type();
+        let fn_val = module.get_function(&intrinsic_name).unwrap_or_else(|| {
+            let fn_type = f32_type.fn_type(&[f32_type.into()], false);
+            module.add_function(&intrinsic_name, fn_type, None)
+        });
+        builder.build_call(fn_val, &[val.into()], "").unwrap().try_as_basic_value().left().unwrap().into_float_value()
+    };
 
     for op in ops {
         current = match op {
@@ -190,6 +201,9 @@ pub fn emit_ops<'ctx>(
             Op::Mul => builder.build_float_mul(current, b, "mul").unwrap(),
             Op::Div => builder.build_float_div(current, b, "div").unwrap(),
             Op::Neg => builder.build_float_neg(current, "neg").unwrap(),
+
+            Op::Exp => build_intrinsic("llvm.exp", current),
+            Op::Log => build_intrinsic("llvm.log", current),
 
             Op::Relu => {
                 // ReLU: max(0, x)
@@ -206,7 +220,7 @@ pub fn emit_ops<'ctx>(
             Op::Sigmoid => {
                 // Sigmoid: 1 / (1 + exp(-x))
                 let neg_x = builder.build_float_neg(current, "neg_x").unwrap();
-                let exp_neg_x = emit_exp(builder, context, neg_x);
+                let exp_neg_x = build_intrinsic("llvm.exp", neg_x);
                 let one = context.f32_type().const_float(1.0);
                 let denom = builder.build_float_add(one, exp_neg_x, "denom").unwrap();
                 builder.build_float_div(one, denom, "sigmoid").unwrap()
@@ -216,11 +230,37 @@ pub fn emit_ops<'ctx>(
                 // Tanh via: (exp(2x) - 1) / (exp(2x) + 1)
                 let two = context.f32_type().const_float(2.0);
                 let two_x = builder.build_float_mul(current, two, "two_x").unwrap();
-                let exp_2x = emit_exp(builder, context, two_x);
+                let exp_2x = build_intrinsic("llvm.exp", two_x);
                 let one = context.f32_type().const_float(1.0);
                 let num = builder.build_float_sub(exp_2x, one, "tanh_num").unwrap();
                 let den = builder.build_float_add(exp_2x, one, "tanh_den").unwrap();
                 builder.build_float_div(num, den, "tanh").unwrap()
+            }
+
+            Op::Gelu => {
+                // GELU: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+                let half = context.f32_type().const_float(0.5);
+                let one = context.f32_type().const_float(1.0);
+                let sqrt_2_pi = context.f32_type().const_float((2.0f64 / std::f64::consts::PI).sqrt());
+                let coeff = context.f32_type().const_float(0.044715);
+
+                let x_sq = builder.build_float_mul(current, current, "x_sq").unwrap();
+                let x_cb = builder.build_float_mul(x_sq, current, "x_cb").unwrap();
+                let c_x_cb = builder.build_float_mul(coeff, x_cb, "c_x_cb").unwrap();
+                let inner = builder.build_float_add(current, c_x_cb, "inner").unwrap();
+                let scaled = builder.build_float_mul(sqrt_2_pi, inner, "scaled").unwrap();
+                
+                // tanh
+                let two = context.f32_type().const_float(2.0);
+                let two_x_tanh = builder.build_float_mul(two, scaled, "two_x_tanh").unwrap();
+                let exp_2x_tanh = build_intrinsic("llvm.exp", two_x_tanh);
+                let num_tanh = builder.build_float_sub(exp_2x_tanh, one, "num_tanh").unwrap();
+                let den_tanh = builder.build_float_add(exp_2x_tanh, one, "den_tanh").unwrap();
+                let tanh_val = builder.build_float_div(num_tanh, den_tanh, "tanh_val").unwrap();
+
+                let one_plus_tanh = builder.build_float_add(one, tanh_val, "one_plus_tanh").unwrap();
+                let half_x = builder.build_float_mul(half, current, "half_x").unwrap();
+                builder.build_float_mul(half_x, one_plus_tanh, "gelu").unwrap()
             }
 
             Op::ToTernary => {
@@ -257,61 +297,7 @@ pub fn emit_ops<'ctx>(
     Ok(current)
 }
 
-/// Emit exp(x) approximation using Padé-like rational polynomial.
-///
-/// Uses the identity: exp(x) ≈ (1 + x/n)^n for large n.
-/// We use a 6th-order Taylor series which is accurate for |x| < 5:
-///   exp(x) ≈ 1 + x + x²/2 + x³/6 + x⁴/24 + x⁵/120 + x⁶/720
-///
-/// For sigmoid/tanh with typical neural network values, this is sufficient.
-/// LLVM will optimize this into fast FMA (fused multiply-add) instructions.
-fn emit_exp<'ctx>(
-    builder: &Builder<'ctx>,
-    context: &'ctx Context,
-    x: FloatValue<'ctx>,
-) -> FloatValue<'ctx> {
-    let f32_type = context.f32_type();
-    let one = f32_type.const_float(1.0);
-    let half = f32_type.const_float(0.5);
-    let sixth = f32_type.const_float(1.0 / 6.0);
-    let c4 = f32_type.const_float(1.0 / 24.0);
-    let c5 = f32_type.const_float(1.0 / 120.0);
-    let c6 = f32_type.const_float(1.0 / 720.0);
 
-    // x² = x * x
-    let x2 = builder.build_float_mul(x, x, "x2").unwrap();
-    // x³ = x² * x
-    let x3 = builder.build_float_mul(x2, x, "x3").unwrap();
-    // x⁴ = x² * x²
-    let x4 = builder.build_float_mul(x2, x2, "x4").unwrap();
-    // x⁵ = x⁴ * x
-    let x5 = builder.build_float_mul(x4, x, "x5").unwrap();
-    // x⁶ = x³ * x³
-    let x6 = builder.build_float_mul(x3, x3, "x6").unwrap();
-
-    // result = 1 + x + x²/2 + x³/6 + x⁴/24 + x⁵/120 + x⁶/720
-    let t1 = builder.build_float_add(one, x, "t1").unwrap();
-    let t2_term = builder.build_float_mul(x2, half, "t2_term").unwrap();
-    let t2 = builder.build_float_add(t1, t2_term, "t2").unwrap();
-    let t3_term = builder.build_float_mul(x3, sixth, "t3_term").unwrap();
-    let t3 = builder.build_float_add(t2, t3_term, "t3").unwrap();
-    let t4_term = builder.build_float_mul(x4, c4, "t4_term").unwrap();
-    let t4 = builder.build_float_add(t3, t4_term, "t4").unwrap();
-    let t5_term = builder.build_float_mul(x5, c5, "t5_term").unwrap();
-    let t5 = builder.build_float_add(t4, t5_term, "t5").unwrap();
-    let t6_term = builder.build_float_mul(x6, c6, "t6_term").unwrap();
-    let result = builder.build_float_add(t5, t6_term, "exp_approx").unwrap();
-
-    // Clamp to positive (exp is always > 0)
-    let zero = f32_type.const_float(1e-7);
-    let cmp = builder
-        .build_float_compare(inkwell::FloatPredicate::OGT, result, zero, "exp_pos")
-        .unwrap();
-    builder
-        .build_select(cmp, result, zero, "exp_clamped")
-        .unwrap()
-        .into_float_value()
-}
 
 /// Type alias for the JIT-compiled graph function.
 type GraphFn = unsafe extern "C" fn(*const f32, *const f32, *mut f32, u64);

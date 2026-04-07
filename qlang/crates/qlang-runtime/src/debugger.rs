@@ -756,7 +756,17 @@ fn execute_single_node(
             node_outputs.insert((node_id, 0), result);
         }
 
-        Op::Relu => {
+        Op::Exp => {
+            let input = get_one_input_dbg(graph, node_id, node_outputs)?;
+            let result = tensor_unaryop_dbg(&input, |x| x.exp(), "exp")?;
+            node_outputs.insert((node_id, 0), result);
+        }
+        Op::Log => {
+            let input = get_one_input_dbg(graph, node_id, node_outputs)?;
+            let result = tensor_unaryop_dbg(&input, |x| x.ln(), "log")?;
+            node_outputs.insert((node_id, 0), result);
+        }
+            Op::Relu => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
             let result = tensor_unaryop_dbg(&input, |x| x.max(0.0), "relu")?;
             node_outputs.insert((node_id, 0), result);
@@ -872,16 +882,38 @@ fn execute_single_node(
         }
 
         Op::Measure => {
-            let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: input not f32".into()))?;
-            let mut max_idx = 0;
-            let mut max_val = f32::NEG_INFINITY;
-            for (i, &v) in va.iter().enumerate() {
-                if v > max_val { max_val = v; max_idx = i; }
+            let incoming = graph.incoming_edges(node_id);
+            if incoming.is_empty() {
+                return Err(ExecutionError::MissingInput(node_id, "measure needs at least a state".into()));
             }
-            let mut result = vec![0.0f32; va.len()];
-            result[max_idx] = 1.0;
-            node_outputs.insert((node_id, 0), TensorData::from_f32(input.shape.clone(), &result));
+            let state = node_outputs
+                .get(&(incoming[0].from_node, incoming[0].from_port))
+                .cloned()
+                .ok_or(ExecutionError::MissingInput(node_id, "state".into()))?;
+            let result = if incoming.len() >= 2 {
+                let operators = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "operators".into()))?;
+                tensor_measure_with_operators_dbg(&state, &operators)?
+            } else {
+                tensor_measure_dbg(&state)?
+            };
+            node_outputs.insert((node_id, 0), result);
+            stats.quantum_ops += 1;
+        }
+
+        Op::Entangle => {
+            let (a, b) = get_two_inputs_dbg(graph, node_id, node_outputs)?;
+            let result = tensor_entangle_dbg(&a, &b)?;
+            node_outputs.insert((node_id, 0), result);
+            stats.quantum_ops += 1;
+        }
+
+        Op::Collapse => {
+            let input = get_one_input_dbg(graph, node_id, node_outputs)?;
+            let result = tensor_measure_dbg(&input)?;
+            node_outputs.insert((node_id, 0), result);
             stats.quantum_ops += 1;
         }
 
@@ -894,8 +926,9 @@ fn execute_single_node(
                 .get(&(incoming[0].from_node, incoming[0].from_port))
                 .cloned()
                 .ok_or(ExecutionError::MissingInput(node_id, "state".into()))?;
+            let gradient_edge = if incoming.len() >= 3 { &incoming[2] } else { &incoming[1] };
             let gradient = node_outputs
-                .get(&(incoming[1].from_node, incoming[1].from_port))
+                .get(&(gradient_edge.from_node, gradient_edge.from_port))
                 .cloned()
                 .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
             let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
@@ -987,6 +1020,61 @@ fn tensor_unaryop_dbg(
     let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(format!("{name}: input not f32")))?;
     let result: Vec<f32> = va.iter().map(|&x| op(x)).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_measure_dbg(a: &TensorData) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: input not f32".into()))?;
+    let mut max_idx = 0;
+    let mut max_val = f32::NEG_INFINITY;
+    for (i, &v) in va.iter().enumerate() {
+        if v > max_val {
+            max_val = v;
+            max_idx = i;
+        }
+    }
+    let mut result = vec![0.0f32; va.len()];
+    result[max_idx] = 1.0;
+    Ok(TensorData::from_f32(a.shape.clone(), &result))
+}
+
+fn tensor_measure_with_operators_dbg(
+    state: &TensorData,
+    operators: &TensorData,
+) -> Result<TensorData, ExecutionError> {
+    let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: state not f32".into()))?;
+    let vo = operators.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: operators not f32".into()))?;
+    let len = vs.len();
+    if len == 0 || vo.len() % len != 0 {
+        return Err(ExecutionError::RuntimeError(
+            "measure: operators length must be a multiple of state length".into(),
+        ));
+    }
+    let num_ops = vo.len() / len;
+    let mut probs = vec![0.0f32; num_ops];
+    for i in 0..num_ops {
+        let op_slice = &vo[i * len..(i + 1) * len];
+        probs[i] = vs.iter().zip(op_slice.iter()).map(|(s, o)| s * o).sum();
+    }
+    Ok(TensorData::from_f32(qlang_core::tensor::Shape::vector(num_ops), &probs))
+}
+
+fn tensor_entangle_dbg(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input a not f32".into()))?;
+    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input b not f32".into()))?;
+    let mut result = vec![0.0f32; va.len() * vb.len()];
+    for (i, &val_a) in va.iter().enumerate() {
+        for (j, &val_b) in vb.iter().enumerate() {
+            result[i * vb.len() + j] = val_a * val_b;
+        }
+    }
+    let shape = match (a.shape.0.as_slice(), b.shape.0.as_slice()) {
+        ([qlang_core::tensor::Dim::Fixed(m1), qlang_core::tensor::Dim::Fixed(n1)],
+         [qlang_core::tensor::Dim::Fixed(m2), qlang_core::tensor::Dim::Fixed(n2)]) => {
+            qlang_core::tensor::Shape::matrix(m1 * m2, n1 * n2)
+        }
+        _ => qlang_core::tensor::Shape::vector(va.len() * vb.len()),
+    };
+    Ok(TensorData::from_f32(shape, &result))
 }
 
 fn tensor_matmul_dbg(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {

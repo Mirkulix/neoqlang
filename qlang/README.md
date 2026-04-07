@@ -97,6 +97,12 @@ Accuracy retained: 100%
 
 Each compression carries a formal proof annotation linking to mathematical theorems that guarantee bounded distortion.
 
+## AI Integrations & Web Dashboardn
+QLANG now includes built-in integrations for major AI providers and a real-time Web Dashboard:n
+- **AI Providers**: Native clients for Anthropic (Claude), Gemini, Groq, OpenAI, and Ollama.n
+- **Web Dashboard**: A WebSocket-based real-time dashboard for streaming QLANG execution events, performance metrics, and compilation targets directly to the browser.n
+- **Multi-Agent Protocol**: Seamless TCP-based binary communication between AI agents for distributed graph execution and model compression.n
+
 ## ML Features
 
 - **Autograd**: Reverse-mode automatic differentiation
@@ -169,6 +175,48 @@ qlang-cli schedule model.qlg.json # Execution plan
 - **Rust 1.70+** (tested with 1.93)
 - **LLVM 18** (optional, for JIT/AOT compilation)
 - Works without LLVM in interpreter-only mode
+
+### Cargo Features
+
+- `llvm`: aktiviert LLVM‑basierte JIT/AOT‑Backends
+- `gpu`: aktiviert GPU‑Codepfade (WGSL Shader)
+- `mlx`: aktiviert Apple MLX‑spezifische Pfade
+
+Beispiele:
+```bash
+# Ohne LLVM (nur Interpreter)
+cargo build --workspace --no-default-features
+
+# Mit LLVM
+cargo build --workspace --features llvm
+
+# Mit GPU
+cargo build --workspace --features gpu
+```
+
+### Networking (Ollama)
+
+Environment:
+- `QLANG_OLLAMA_HOST` (default `127.0.0.1`)
+- `QLANG_OLLAMA_PORT` (default `11434`)
+
+Für HTTPS‑Termination empfiehlt sich ein Reverse‑Proxy (z. B. Nginx) vor einer lokalen Ollama‑Instanz. Leite `/api/*` nach `http://127.0.0.1:11434` weiter:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name your.domain;
+  ssl_certificate     /etc/ssl/certs/fullchain.pem;
+  ssl_certificate_key /etc/ssl/private/privkey.pem;
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:11434;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
+```
 
 ### Install on Ubuntu/Debian
 ```bash

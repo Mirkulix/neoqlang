@@ -138,19 +138,23 @@ mod platform {
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
+    use rayon::prelude::*;
+
     /// C = A * B where A is [m, k] and B is [k, n], both row-major.
     pub fn matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
         debug_assert_eq!(a.len(), m * k);
         debug_assert_eq!(b.len(), k * n);
         let mut c = vec![0.0f32; m * n];
-        for i in 0..m {
+        
+        // Parallelize over rows of C
+        c.par_chunks_exact_mut(n).enumerate().for_each(|(i, c_row)| {
             for p in 0..k {
                 let a_val = a[i * k + p];
                 for j in 0..n {
-                    c[i * n + j] += a_val * b[p * n + j];
+                    c_row[j] += a_val * b[p * n + j];
                 }
             }
-        }
+        });
         c
     }
 
@@ -159,14 +163,16 @@ mod platform {
         debug_assert_eq!(a.len(), k * m);
         debug_assert_eq!(b.len(), k * n);
         let mut c = vec![0.0f32; m * n];
-        for p in 0..k {
-            for i in 0..m {
+        
+        // Parallelize over rows of C (m)
+        c.par_chunks_exact_mut(n).enumerate().for_each(|(i, c_row)| {
+            for p in 0..k {
                 let a_val = a[p * m + i]; // A^T[i,p] = A[p,i]
                 for j in 0..n {
-                    c[i * n + j] += a_val * b[p * n + j];
+                    c_row[j] += a_val * b[p * n + j];
                 }
             }
-        }
+        });
         c
     }
 
@@ -175,15 +181,17 @@ mod platform {
         debug_assert_eq!(a.len(), m * k);
         debug_assert_eq!(b.len(), n * k);
         let mut c = vec![0.0f32; m * n];
-        for i in 0..m {
+        
+        // Parallelize over rows of C (m)
+        c.par_chunks_exact_mut(n).enumerate().for_each(|(i, c_row)| {
             for j in 0..n {
                 let mut sum = 0.0f32;
                 for p in 0..k {
                     sum += a[i * k + p] * b[j * k + p]; // B^T[p,j] = B[j,p]
                 }
-                c[i * n + j] = sum;
+                c_row[j] = sum;
             }
-        }
+        });
         c
     }
 }

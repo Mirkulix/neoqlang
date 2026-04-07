@@ -13,7 +13,7 @@ env:
 
 jobs:
   test:
-    name: Test
+    name: Test (Ubuntu + LLVM)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,36 @@ jobs:
         working-directory: qlang
         run: cargo test --workspace --release
 
+  test-matrix-no-llvm:
+    name: Test (No-LLVM Matrix)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qlang/target
+          key: ${{ runner.os }}-cargo-nollvm-${{ hashFiles('qlang/Cargo.lock') }}
+
+      - name: Build (no LLVM)
+        working-directory: qlang
+        run: cargo build --workspace --no-default-features
+
+      - name: Test (no LLVM)
+        working-directory: qlang
+        run: cargo test --workspace --no-default-features
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -70,7 +100,6 @@ jobs:
       - name: Clippy
         working-directory: qlang
         run: cargo clippy --workspace -- -D warnings
-        continue-on-error: true  # Don't fail on clippy warnings yet
 
   examples:
     name: Examples
@@ -153,3 +182,34 @@ jobs:
       - name: Test (no LLVM)
         working-directory: qlang
         run: cargo test --workspace --release --no-default-features
+
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run cargo audit
+        working-directory: qlang
+        run: cargo audit --json
+
+  coverage:
+    name: Test Coverage (tarpaulin)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Run tarpaulin
+        working-directory: qlang
+        run: cargo tarpaulin --workspace --out Lcov --output-dir target/coverage
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: qlang/target/coverage/lcov.info

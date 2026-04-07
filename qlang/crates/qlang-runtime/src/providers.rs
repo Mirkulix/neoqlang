@@ -6,6 +6,9 @@
 
 use std::collections::HashMap;
 use std::time::Instant;
+use std::path::Path;
+use std::fs;
+use serde_json::Value;
 
 // ---------------------------------------------------------------------------
 // Core enums
@@ -161,6 +164,16 @@ impl ProviderRegistry {
         // Cloud providers from environment
         self.discover_openai();
         self.discover_anthropic();
+        self.discover_google();
+        self.discover_azure_openai();
+        self.discover_cohere();
+        self.discover_mistral();
+        self.discover_groq();
+        self.discover_huggingface();
+        self.discover_together();
+        self.discover_perplexity();
+        self.discover_bedrock();
+        self.discover_xai();
     }
 
     fn discover_ollama(&mut self) {
@@ -208,7 +221,9 @@ impl ProviderRegistry {
     }
 
     fn discover_openai(&mut self) {
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        let key = std::env::var("OPENAI_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("openai"));
+        if let Some(key) = key {
             self.providers.push(Provider {
                 id: "openai".into(),
                 name: "OpenAI".into(),
@@ -247,7 +262,9 @@ impl ProviderRegistry {
     }
 
     fn discover_anthropic(&mut self) {
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        let key = std::env::var("ANTHROPIC_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("anthropic"));
+        if let Some(key) = key {
             self.providers.push(Provider {
                 id: "anthropic".into(),
                 name: "Anthropic".into(),
@@ -265,6 +282,306 @@ impl ProviderRegistry {
                     quality_score: 0.95,
                 }],
                 base_url: "https://api.anthropic.com".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_google(&mut self) {
+        let key = std::env::var("GOOGLE_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("google"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "google".into(),
+                name: "Google Gemini".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "gemini-1.5-pro".into(),
+                        display_name: "Gemini 1.5 Pro".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 5.0,
+                        context_window: 1_000_000,
+                        quality_score: 0.90,
+                    },
+                    ModelConfig {
+                        model_id: "gemini-1.5-flash".into(),
+                        display_name: "Gemini 1.5 Flash".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 0.5,
+                        context_window: 1_000_000,
+                        quality_score: 0.80,
+                    },
+                ],
+                base_url: "https://generativelanguage.googleapis.com".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_azure_openai(&mut self) {
+        let key = std::env::var("AZURE_OPENAI_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("azure-openai"));
+        let endpoint = std::env::var("AZURE_OPENAI_ENDPOINT").ok();
+        if let (Some(key), Some(ep)) = (key, endpoint) {
+            self.providers.push(Provider {
+                id: "azure-openai".into(),
+                name: "Azure OpenAI".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "gpt-4o".into(),
+                        display_name: "GPT-4o".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 5.0,
+                        context_window: 128_000,
+                        quality_score: 0.95,
+                    },
+                    ModelConfig {
+                        model_id: "gpt-4o-mini".into(),
+                        display_name: "GPT-4o Mini".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 0.15,
+                        context_window: 128_000,
+                        quality_score: 0.80,
+                    },
+                ],
+                base_url: ep,
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_cohere(&mut self) {
+        let key = std::env::var("COHERE_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("cohere"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "cohere".into(),
+                name: "Cohere".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "command".into(),
+                        display_name: "Command".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 0.5,
+                        context_window: 128_000,
+                        quality_score: 0.85,
+                    },
+                    ModelConfig {
+                        model_id: "command-light".into(),
+                        display_name: "Command Light".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 0.1,
+                        context_window: 128_000,
+                        quality_score: 0.75,
+                    },
+                ],
+                base_url: "https://api.cohere.com".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_mistral(&mut self) {
+        let key = std::env::var("MISTRAL_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("mistral"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "mistral".into(),
+                name: "Mistral AI".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "mistral-large-latest".into(),
+                        display_name: "Mistral Large".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 2.0,
+                        context_window: 32_000,
+                        quality_score: 0.90,
+                    },
+                    ModelConfig {
+                        model_id: "mistral-small-latest".into(),
+                        display_name: "Mistral Small".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 0.3,
+                        context_window: 16_000,
+                        quality_score: 0.80,
+                    },
+                ],
+                base_url: "https://api.mistral.ai".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_groq(&mut self) {
+        let key = std::env::var("GROQ_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("groq"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "groq".into(),
+                name: "Groq".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "llama3-70b-8192".into(),
+                        display_name: "Llama 3 70B".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration],
+                        cost_per_million_tokens: 0.2,
+                        context_window: 8_192,
+                        quality_score: 0.88,
+                    },
+                    ModelConfig {
+                        model_id: "mixtral-8x7b-32768".into(),
+                        display_name: "Mixtral 8x7B".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration],
+                        cost_per_million_tokens: 0.15,
+                        context_window: 32_768,
+                        quality_score: 0.85,
+                    },
+                ],
+                base_url: "https://api.groq.com".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_huggingface(&mut self) {
+        let key = std::env::var("HUGGINGFACE_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("huggingface"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "huggingface".into(),
+                name: "HuggingFace Inference".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "meta-llama/Meta-Llama-3-8B-Instruct".into(),
+                        display_name: "Llama 3 8B Instruct".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration],
+                        cost_per_million_tokens: 0.0,
+                        context_window: 8_192,
+                        quality_score: 0.80,
+                    },
+                ],
+                base_url: "https://api-inference.huggingface.co".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_together(&mut self) {
+        let key = std::env::var("TOGETHER_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("together"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "together".into(),
+                name: "Together AI".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".into(),
+                        display_name: "Llama 3.1 70B Turbo".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration],
+                        cost_per_million_tokens: 0.25,
+                        context_window: 32_000,
+                        quality_score: 0.88,
+                    },
+                ],
+                base_url: "https://api.together.xyz".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_perplexity(&mut self) {
+        let key = std::env::var("PERPLEXITY_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("perplexity"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "perplexity".into(),
+                name: "Perplexity".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "llama-3.1-sonar-large-32k-online".into(),
+                        display_name: "Sonar Large 32k Online".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 1.0,
+                        context_window: 32_000,
+                        quality_score: 0.88,
+                    },
+                ],
+                base_url: "https://api.perplexity.ai".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
+    fn discover_bedrock(&mut self) {
+        let region = std::env::var("AWS_REGION").ok();
+        let access = std::env::var("AWS_ACCESS_KEY_ID").ok();
+        let secret = std::env::var("AWS_SECRET_ACCESS_KEY").ok();
+        if region.is_some() && access.is_some() && secret.is_some() {
+            self.providers.push(Provider {
+                id: "aws-bedrock".into(),
+                name: "AWS Bedrock".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "anthropic.claude-3-sonnet-20240229-v1:0".into(),
+                        display_name: "Claude 3 Sonnet (Bedrock)".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 3.0,
+                        context_window: 200_000,
+                        quality_score: 0.95,
+                    },
+                    ModelConfig {
+                        model_id: "meta.llama3-70b-instruct-v1:0".into(),
+                        display_name: "Llama 3 70B Instruct (Bedrock)".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration],
+                        cost_per_million_tokens: 1.0,
+                        context_window: 8_192,
+                        quality_score: 0.88,
+                    },
+                ],
+                base_url: "https://bedrock.amazonaws.com".into(),
+                api_key: None,
+                available: true,
+            });
+        }
+    }
+
+    fn discover_xai(&mut self) {
+        let key = std::env::var("XAI_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("xai"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "xai".into(),
+                name: "xAI".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "grok-2".into(),
+                        display_name: "Grok‑2".into(),
+                        capabilities: vec![Capability::TextGeneration, Capability::CodeGeneration, Capability::Summarization],
+                        cost_per_million_tokens: 2.0,
+                        context_window: 128_000,
+                        quality_score: 0.90,
+                    },
+                ],
+                base_url: "https://api.x.ai".into(),
                 api_key: Some(key),
                 available: true,
             });
@@ -398,10 +715,41 @@ impl ProviderRegistry {
                     .generate(&model_id, prompt, None)
                     .map_err(|e| format!("Ollama error: {}", e))?
             }
+            "openai" => {
+                if let Some(client) = crate::openai_client::OpenAiClient::from_env() {
+                    client.generate(&model_id, prompt)
+                        .map_err(|e| format!("OpenAI error: {}", e))?
+                } else {
+                    return Err("OpenAI API key not configured (set OPENAI_API_KEY)".into());
+                }
+            }
+            "anthropic" => {
+                if let Some(client) = crate::anthropic_client::AnthropicClient::from_env() {
+                    let msgs = vec![crate::ollama::ChatMessage::user(prompt)];
+                    client.chat(&model_id, &msgs)
+                        .map_err(|e| format!("Anthropic error: {}", e))?
+                } else {
+                    return Err("Anthropic API key not configured (set ANTHROPIC_API_KEY)".into());
+                }
+            }
+            "gemini" => {
+                if let Some(client) = crate::gemini_client::GeminiClient::from_env() {
+                    client.generate(&model_id, prompt)
+                        .map_err(|e| format!("Gemini error: {}", e))?
+                } else {
+                    return Err("Gemini API key not configured (set GEMINI_API_KEY)".into());
+                }
+            }
+            "groq" => {
+                if let Some(client) = crate::groq_client::GroqClient::from_env() {
+                    let msgs = vec![crate::ollama::ChatMessage::user(prompt)];
+                    client.chat(&model_id, &msgs)
+                        .map_err(|e| format!("Groq error: {}", e))?
+                } else {
+                    return Err("Groq API key not configured (set GROQ_API_KEY)".into());
+                }
+            }
             _ => {
-                // For cloud providers, fall back to Ollama if available,
-                // otherwise return a placeholder.
-                // Full cloud HTTP clients will be added later.
                 let client = crate::ollama::OllamaClient::from_env();
                 match client.generate(&model_id, prompt, None) {
                     Ok(t) => t,
@@ -448,4 +796,20 @@ impl ProviderRegistry {
         }
         s
     }
+}
+
+/// Read an API key for a given provider from config file:
+/// workspace_root/data/config/providers.json
+fn read_api_key_from_config(provider_id: &str) -> Option<String> {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = Path::new(manifest).parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
+    let config_path = workspace_root.join("data").join("config").join("providers.json");
+    let content = fs::read_to_string(&config_path).ok()?;
+    let json: Value = serde_json::from_str(&content).ok()?;
+    json.get(provider_id)
+        .and_then(|p| p.get("api_key"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }

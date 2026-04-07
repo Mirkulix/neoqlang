@@ -24,6 +24,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+// Trait object that supports both Read and Write
+trait ReadWrite: std::io::Read + std::io::Write {}
+impl<T: std::io::Read + std::io::Write> ReadWrite for T {}
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -182,11 +185,40 @@ impl OllamaClient {
 
     // -- low-level HTTP ----------------------------------------------------
 
-    fn connect(&self) -> Result<TcpStream> {
+    #[cfg(not(feature = "tls"))]
+    fn connect(&self) -> Result<Box<dyn ReadWrite>> {
         let stream = TcpStream::connect(self.addr())?;
         stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-        Ok(stream)
+        Ok(Box::new(stream))
+    }
+
+    #[cfg(feature = "tls")]
+    fn connect(&self) -> Result<Box<dyn ReadWrite>> {
+        let tcp = TcpStream::connect(self.addr())?;
+        tcp.set_read_timeout(Some(Duration::from_secs(120)))?;
+        tcp.set_write_timeout(Some(Duration::from_secs(10)))?;
+        let tls_enabled = std::env::var("QLANG_OLLAMA_TLS")
+            .ok()
+            .map(|v| {
+                let l = v.to_ascii_lowercase();
+                l == "1" || l == "true" || l == "yes" || l == "on" || l == "https"
+            })
+            .unwrap_or(false);
+        if !tls_enabled {
+            return Ok(Box::new(tcp));
+        }
+        use std::sync::Arc;
+        let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let server_name = rustls::pki_types::ServerName::try_from(self.host.as_str())
+            .map_err(|_| OllamaError::InvalidResponse("invalid server name".into()))?;
+        let conn = rustls::ClientConnection::new(Arc::new(config), server_name)
+            .map_err(|e| OllamaError::InvalidResponse(format!("tls: {e}")))?;
+        let stream = rustls::StreamOwned::new(conn, tcp);
+        Ok(Box::new(stream))
     }
 
     fn http_get(&self, path: &str) -> Result<String> {
@@ -227,20 +259,20 @@ impl OllamaClient {
     /// Read a full HTTP response: status line, headers, body.
     ///
     /// Supports both `Content-Length` and `Transfer-Encoding: chunked`.
-    fn read_response(&self, stream: TcpStream) -> Result<String> {
+    fn read_response(&self, stream: Box<dyn ReadWrite>) -> Result<String> {
         let mut reader = BufReader::new(stream);
 
         // -- status line ---------------------------------------------------
         let mut status_line = String::new();
-        reader.read_line(&mut status_line).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut
+        if let Err(e) = reader.read_line(&mut status_line) {
+            return Err(if e.kind() == std::io::ErrorKind::TimedOut
                 || e.kind() == std::io::ErrorKind::WouldBlock
             {
                 OllamaError::Timeout
             } else {
                 OllamaError::Connection(e)
-            }
-        })?;
+            });
+        }
 
         let status = parse_status_code(&status_line)?;
 
@@ -312,7 +344,7 @@ fn parse_status_code(line: &str) -> Result<u16> {
 ///
 /// Each chunk is: `<hex-size>\r\n<data>\r\n`, terminated by a `0\r\n\r\n`
 /// chunk.
-fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<String> {
+fn read_chunked_body<R: std::io::Read + std::io::BufRead>(reader: &mut R) -> Result<String> {
     let mut body = Vec::new();
 
     loop {

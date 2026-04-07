@@ -3,7 +3,7 @@ version: "3.8"
 services:
   qlang-api:
     build: .
-    command: ["serve", "--port", "8080"]
+    command: ["web", "--port", "8080"]
     ports:
       - "8080:8080"
     restart: always
@@ -17,18 +17,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  qlang-worker:
-    build: .
-    command: ["worker"]
-    restart: always
-    volumes:
-      - qlang-models:/data/models
-    environment:
-      - QLANG_MODEL_DIR=/data/models
-    depends_on:
-      qlang-api:
-        condition: service_healthy
 
 volumes:
   qlang-models:

@@ -17,7 +17,7 @@ pub type EdgeId = u32;
 ///
 /// This IS the program. Not text. Not syntax. A graph.
 /// AI agents emit this directly. Compilers consume it directly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Graph {
     pub id: String,
     pub version: String,
@@ -28,7 +28,7 @@ pub struct Graph {
 }
 
 /// A single computation node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
     pub op: Op,
@@ -39,7 +39,7 @@ pub struct Node {
 }
 
 /// A directed edge: data flows from one node's output to another's input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     pub id: EdgeId,
     pub from_node: NodeId,

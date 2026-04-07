@@ -262,12 +262,12 @@ impl Tape {
                     }
                 }
 
-                TapeEntry::Sigmoid { out, input: _ } => {
+                TapeEntry::Sigmoid { out, input } => {
                     // d(sigmoid)/dx = sigmoid * (1 - sigmoid)
                     let grad_out = grads[*out].clone();
                     let s = &self.values[*out].data;
                     for i in 0..grad_out.len() {
-                        grads[*out][i] = grad_out[i] * s[i] * (1.0 - s[i]);
+                        grads[*input][i] = grad_out[i] * s[i] * (1.0 - s[i]);
                     }
                 }
 

@@ -459,6 +459,8 @@ impl<'a> Parser<'a> {
             "to_lowrank" => Ok((Op::ToLowRank { rank: 16 }, first_type)),
             "superpose" => Ok((Op::Superpose, first_type)),
             "measure" => Ok((Op::Measure, first_type)),
+            "entangle" => Ok((Op::Entangle, first_type)),
+            "collapse" => Ok((Op::Collapse, first_type)),
             "entropy" => Ok((Op::Entropy, TensorType::f32_scalar())),
             "evolve" => Ok((Op::Evolve { gamma: 0.01, dt: 0.001 }, first_type)),
             "project_ternary" => Ok((Op::Project { manifold: Manifold::Ternary }, first_type)),
@@ -581,6 +583,8 @@ pub fn to_qlang_text(graph: &Graph) -> String {
                     Op::ToLowRank { .. } => "to_lowrank",
                     Op::Superpose => "superpose",
                     Op::Measure => "measure",
+                    Op::Entangle => "entangle",
+                    Op::Collapse => "collapse",
                     Op::Entropy => "entropy",
                     Op::Evolve { .. } => "evolve",
                     Op::Project { .. } => "project_ternary",
@@ -795,17 +799,45 @@ graph roundtrip {
 graph quantum {
   input state: f32[16]
   input gradient: f32[16]
+  input partner: f32[16]
 
   node evolved = evolve(state, gradient)
   node measured = measure(evolved)
+  node entangled = entangle(measured, partner)
+  node collapsed = collapse(entangled)
 
-  output result = measured
+  output result = collapsed
 }
 "#;
         let graph = parse(source).unwrap();
-        assert_eq!(graph.nodes.len(), 5);
+        assert_eq!(graph.nodes.len(), 8);
 
         let evolve_node = graph.nodes.iter().find(|n| matches!(n.op, Op::Evolve { .. })).unwrap();
         assert!(evolve_node.op.is_quantum());
+        assert!(graph.nodes.iter().any(|n| matches!(n.op, Op::Entangle)));
+        assert!(graph.nodes.iter().any(|n| matches!(n.op, Op::Collapse)));
+    }
+
+    #[test]
+    fn roundtrip_quantum_emit_includes_entangle_and_collapse() {
+        let source = r#"
+graph quantum_roundtrip {
+  input state: f32[4]
+  input partner: f32[4]
+
+  node entangled = entangle(state, partner)
+  node collapsed = collapse(entangled)
+
+  output result = collapsed
+}
+"#;
+        let graph = parse(source).unwrap();
+        let emitted = to_qlang_text(&graph);
+        let reparsed = parse(&emitted).unwrap();
+
+        assert!(emitted.contains("entangle("));
+        assert!(emitted.contains("collapse("));
+        assert!(reparsed.nodes.iter().any(|n| matches!(n.op, Op::Entangle)));
+        assert!(reparsed.nodes.iter().any(|n| matches!(n.op, Op::Collapse)));
     }
 }

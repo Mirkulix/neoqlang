@@ -17,6 +17,9 @@ use std::io::Write;
 use std::process;
 
 fn main() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
@@ -48,6 +51,16 @@ fn main() {
     }
 
     if command == "web" {
+        let port: u16 = args.iter()
+            .position(|a| a == "--port")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8081);
+        cmd_web(port);
+        return;
+    }
+
+    if command == "serve" {
         let port: u16 = args.iter()
             .position(|a| a == "--port")
             .and_then(|i| args.get(i + 1))
@@ -124,6 +137,11 @@ fn main() {
         }
         let file_path = &args[2];
         cmd_exec_script(file_path);
+        return;
+    }
+
+    if command == "kubernetes" || command == "k8s" {
+        cmd_kubernetes(&args[2..]);
         return;
     }
 
@@ -241,6 +259,7 @@ fn print_usage() {
     eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
     eprintln!("  qlang-cli lsp                                            Start LSP server (stdin/stdout)");
     eprintln!("  qlang-cli web      [--port 8081]                       Start web dashboard server");
+    eprintln!("  qlang-cli serve    [--port 8081]                       Alias for 'web'");
     eprintln!("  qlang-cli train-mnist [--port 8081] [--epochs 50]      Train MNIST with live dashboard");
     eprintln!("  qlang-cli ai-train [--model M] [--quick]               AI-designed training pipeline");
     eprintln!("  qlang-cli proxy    [--port 9100] [--upstream URL]       HTTP-to-QLMS signing proxy");
@@ -263,6 +282,52 @@ fn print_usage() {
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
     eprintln!("  qlang-cli ascii    <file.qlg.json>                    ASCII visualization");
     eprintln!("  qlang-cli llvm-ir  <file.qlg.json>                    Show LLVM IR output");
+}
+
+fn cmd_kubernetes(args: &[String]) {
+    use qlang_agent::kubernetes::{generate_job_manifests, K8sConfig};
+    use qlang_agent::distributed::{create_data_parallel_job, Hyperparams};
+
+    let n_workers = args.iter()
+        .position(|a| a == "--workers")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|w| w.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let n_gpus = args.iter()
+        .position(|a| a == "--gpu")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|g| g.parse::<usize>().ok());
+
+    let mut config = K8sConfig::default();
+    config.gpu_limit = n_gpus;
+
+    println!("=== Generating Kubernetes Manifests ===");
+    println!("Workers: {}", n_workers);
+    if let Some(gpu) = n_gpus {
+        println!("GPUs per worker: {}", gpu);
+    }
+    println!("Namespace: {}", config.namespace);
+    println!();
+
+    let job = create_data_parallel_job("qlang-training", n_workers, Hyperparams::default());
+    let manifests = generate_job_manifests(&job, &config);
+
+    let output_dir = std::path::Path::new("k8s-manifests");
+    if !output_dir.exists() {
+        std::fs::create_dir(output_dir).unwrap();
+    }
+
+    for manifest in manifests {
+        let filename = format!("{}.yaml", manifest.name);
+        let path = output_dir.join(&filename);
+        std::fs::write(&path, &manifest.yaml).unwrap();
+        println!("Created: k8s-manifests/{}", filename);
+    }
+
+    println!("\nManifests generated successfully!");
+    println!("To deploy the cluster, run:");
+    println!("  kubectl apply -f k8s-manifests/");
 }
 
 fn cmd_devices() {

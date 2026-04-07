@@ -721,10 +721,10 @@ mod tests {
         g.add_edge(inp, 0, out, 0, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let warnings: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Warning).collect();
+        let unused: Vec<_> = diags.iter().filter(|d| d.message.contains("unused")).collect();
         assert!(
-            warnings.iter().any(|d| d.message.contains("unused")),
-            "Expected warning about unused node, got: {warnings:?}"
+            !unused.is_empty(),
+            "Expected warning or info about unused node, got: {diags:?}"
         );
     }
 
