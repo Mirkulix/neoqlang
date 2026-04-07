@@ -133,6 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_dir: PathBuf::from("data"),
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir,
+        auth_token: std::env::var("QO_AUTH_TOKEN").ok(),
     };
 
     if config.static_dir.is_some() {
