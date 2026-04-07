@@ -875,4 +875,48 @@ mod tests {
             data.graphs.len()
         );
     }
+
+    // --- Simulation + strategy tests ---
+
+    #[test]
+    fn simulation_runs_before_execution() {
+        let (strategy, confidence) = simulate_before_execution("Recherchiere die Vorteile von Rust");
+        assert!(!strategy.is_empty(), "strategy name must not be empty");
+        assert!(confidence > 0.0 && confidence <= 1.0, "confidence must be in (0, 1]");
+    }
+
+    #[test]
+    fn strategy_instruction_maps_correctly() {
+        let strategies = [
+            "Direkte Ausführung",
+            "Recherche zuerst",
+            "Kreative Lösung",
+            "Dekomposition + Delegation",
+        ];
+        let instructions: Vec<&str> = strategies
+            .iter()
+            .map(|s| strategy_instruction(s))
+            .collect();
+        // All must be non-empty
+        for instr in &instructions {
+            assert!(!instr.is_empty());
+        }
+        // "Direkte Ausführung" must mention EINEN
+        assert!(instructions[0].contains("EINEN"));
+        // "Recherche zuerst" must mention Recherche
+        assert!(instructions[1].contains("Recherche"));
+        // "Kreative Lösung" must mention Artisan
+        assert!(instructions[2].contains("Artisan"));
+        // Default must mention Zerlege
+        assert!(instructions[3].contains("Zerlege"));
+    }
+
+    #[test]
+    fn strategy_index_maps_correctly() {
+        assert_eq!(strategy_index("Direkte Ausführung"), 0);
+        assert_eq!(strategy_index("Dekomposition + Delegation"), 1);
+        assert_eq!(strategy_index("Recherche zuerst"), 2);
+        assert_eq!(strategy_index("Kreative Lösung"), 3);
+        assert_eq!(strategy_index("unknown"), 1); // default fallback
+    }
 }
