@@ -4,9 +4,9 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use qo_agents::AgentRegistry;
+use qo_agents::{AgentRegistry, AgentRole};
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
-use qo_evolution::{PatternDetector, ProposalEngine, QuantumState};
+use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
 use qo_memory::{GraphStore, ObsidianBridge, Store};
 use std::sync::Arc;
@@ -86,6 +86,74 @@ pub fn build_app(
         proposals,
         quantum,
     });
+
+    // Load persisted goals
+    if let Ok(goals) = state.store.list_goals() {
+        let mut reg = state.agents.blocking_lock();
+        for (_, json) in goals {
+            match serde_json::from_str::<qo_agents::Goal>(&json) {
+                Ok(goal) => reg.restore_goal(goal),
+                Err(e) => tracing::warn!("failed to deserialize persisted goal: {e}"),
+            }
+        }
+    }
+
+    // Load persisted agent stats
+    if let Ok(agent_stats) = state.store.load_agent_stats() {
+        let mut reg = state.agents.blocking_lock();
+        for (role_str, json) in agent_stats {
+            let role = match role_str.as_str() {
+                "Ceo" => Some(AgentRole::Ceo),
+                "Researcher" => Some(AgentRole::Researcher),
+                "Developer" => Some(AgentRole::Developer),
+                "Guardian" => Some(AgentRole::Guardian),
+                "Strategist" => Some(AgentRole::Strategist),
+                "Artisan" => Some(AgentRole::Artisan),
+                _ => None,
+            };
+            if let Some(role) = role {
+                #[derive(serde::Deserialize)]
+                struct AgentStats { tasks_completed: u32, tasks_failed: u32 }
+                match serde_json::from_str::<AgentStats>(&json) {
+                    Ok(stats) => reg.restore_agent_stats(role, stats.tasks_completed, stats.tasks_failed),
+                    Err(e) => tracing::warn!("failed to deserialize agent stats for {role_str}: {e}"),
+                }
+            }
+        }
+    }
+
+    // Load persisted patterns
+    if let Ok(patterns_data) = state.store.list_patterns() {
+        let mut det = state.patterns.blocking_lock();
+        for (_, json) in patterns_data {
+            match serde_json::from_str::<Pattern>(&json) {
+                Ok(pattern) => det.restore_pattern(pattern),
+                Err(e) => tracing::warn!("failed to deserialize persisted pattern: {e}"),
+            }
+        }
+    }
+
+    // Load persisted proposals
+    if let Ok(proposals_data) = state.store.list_proposals() {
+        let mut eng = state.proposals.blocking_lock();
+        for (_, json) in proposals_data {
+            match serde_json::from_str::<Proposal>(&json) {
+                Ok(proposal) => eng.restore_proposal(proposal),
+                Err(e) => tracing::warn!("failed to deserialize persisted proposal: {e}"),
+            }
+        }
+    }
+
+    // Load persisted quantum state
+    if let Ok(Some(json)) = state.store.load_quantum_state() {
+        match serde_json::from_str::<QuantumState>(&json) {
+            Ok(qs) => {
+                let mut quantum = state.quantum.blocking_lock();
+                *quantum = qs;
+            }
+            Err(e) => tracing::warn!("failed to deserialize persisted quantum state: {e}"),
+        }
+    }
 
     let api_router = Router::new()
         .route("/api/health", get(routes::health::health))
