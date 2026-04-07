@@ -62,6 +62,17 @@ pub async fn approve_proposal(
         if let Err(e) = state.store.log_action("proposal_approved", &proposal_title, &format!("id={}", id)) {
             tracing::warn!("failed to log proposal_approved action: {e}");
         }
+        // Persist updated proposal
+        {
+            let engine = state.proposals.lock().await;
+            if let Some(proposal) = engine.all().iter().find(|p| p.id == id) {
+                if let Ok(json) = serde_json::to_string(proposal) {
+                    if let Err(e) = state.store.save_proposal(id, &json) {
+                        tracing::warn!("failed to persist approved proposal {}: {e}", id);
+                    }
+                }
+            }
+        }
         Ok(Json(ApproveRejectResponse { success, id }))
     } else {
         Err((StatusCode::NOT_FOUND, format!("Proposal {} not found", id)))
@@ -82,6 +93,17 @@ pub async fn reject_proposal(
     if success {
         if let Err(e) = state.store.log_action("proposal_rejected", &proposal_title, &format!("id={}", id)) {
             tracing::warn!("failed to log proposal_rejected action: {e}");
+        }
+        // Persist updated proposal
+        {
+            let engine = state.proposals.lock().await;
+            if let Some(proposal) = engine.all().iter().find(|p| p.id == id) {
+                if let Ok(json) = serde_json::to_string(proposal) {
+                    if let Err(e) = state.store.save_proposal(id, &json) {
+                        tracing::warn!("failed to persist rejected proposal {}: {e}", id);
+                    }
+                }
+            }
         }
         Ok(Json(ApproveRejectResponse { success, id }))
     } else {
@@ -170,6 +192,40 @@ pub async fn analyze(
     );
     if let Err(e) = state.store.log_action("evolution_analyzed", "Systemanalyse durchgeführt", &details) {
         tracing::warn!("failed to log evolution_analyzed action: {e}");
+    }
+
+    // Persist patterns
+    {
+        let detector = state.patterns.lock().await;
+        for pattern in detector.all_patterns() {
+            if let Ok(json) = serde_json::to_string(pattern) {
+                if let Err(e) = state.store.save_pattern(pattern.id, &json) {
+                    tracing::warn!("failed to persist pattern {}: {e}", pattern.id);
+                }
+            }
+        }
+    }
+
+    // Persist proposals
+    {
+        let engine = state.proposals.lock().await;
+        for proposal in engine.all() {
+            if let Ok(json) = serde_json::to_string(proposal) {
+                if let Err(e) = state.store.save_proposal(proposal.id, &json) {
+                    tracing::warn!("failed to persist proposal {}: {e}", proposal.id);
+                }
+            }
+        }
+    }
+
+    // Persist quantum state
+    {
+        let quantum = state.quantum.lock().await;
+        if let Ok(json) = serde_json::to_string(&*quantum) {
+            if let Err(e) = state.store.save_quantum_state(&json) {
+                tracing::warn!("failed to persist quantum state: {e}");
+            }
+        }
     }
 
     // Build and store QLANG graph for this evolution cycle

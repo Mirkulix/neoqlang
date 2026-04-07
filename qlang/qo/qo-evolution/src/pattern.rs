@@ -109,6 +109,16 @@ impl PatternDetector {
         &self.patterns
     }
 
+    /// Restore a previously persisted pattern. Keeps next_id consistent.
+    pub fn restore_pattern(&mut self, pattern: Pattern) {
+        if pattern.id >= self.next_id {
+            self.next_id = pattern.id + 1;
+        }
+        if !self.patterns.iter().any(|p| p.id == pattern.id) {
+            self.patterns.push(pattern);
+        }
+    }
+
     pub fn active_patterns(&self) -> Vec<&Pattern> {
         let cutoff = now_secs().saturating_sub(3600); // last hour
         self.patterns.iter().filter(|p| p.last_seen >= cutoff).collect()

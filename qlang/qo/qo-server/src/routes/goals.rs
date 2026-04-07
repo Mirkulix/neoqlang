@@ -3,12 +3,17 @@ use axum::{
     Json,
 };
 use qo_agents::{ExecutionGraph, Goal};
+use qo_evolution::SystemStats;
 use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
+
+fn serialize_goal(goal: &Goal) -> Option<String> {
+    serde_json::to_string(goal).ok()
+}
 
 #[derive(Deserialize)]
 pub struct CreateGoalRequest {
@@ -52,6 +57,13 @@ pub async fn create_goal(
     // Log action history
     if let Err(e) = state.store.log_action("goal_created", &req.description, "") {
         tracing::warn!("failed to log goal_created action: {e}");
+    }
+
+    // Persist goal to store
+    if let Some(json) = serialize_goal(&goal) {
+        if let Err(e) = state.store.save_goal(goal.id, &json) {
+            tracing::warn!("failed to persist goal {}: {e}", goal.id);
+        }
     }
 
     // Emit activity: goal created
@@ -215,6 +227,58 @@ pub async fn execute_goal_background(
     {
         let mut registry = state.agents.lock().await;
         registry.finalize_goal(goal_id);
+    }
+
+    // Mini-evolution: pattern analysis after goal completion
+    {
+        let (stats, _cs_energy) = {
+            let agents = state.agents.lock().await;
+            let cs = state.consciousness.lock().await;
+            let agent_list = agents.list_agents();
+            let active = agent_list.iter().filter(|a| a.status == qo_agents::AgentStatus::Active).count() as u8;
+            let idle = agent_list.iter().filter(|a| a.status == qo_agents::AgentStatus::Idle).count() as u8;
+            let completed: u32 = agent_list.iter().map(|a| a.tasks_completed).sum();
+            let failed: u32 = agent_list.iter().map(|a| a.tasks_failed).sum();
+            (SystemStats {
+                total_tasks: completed + failed,
+                tasks_completed: completed,
+                tasks_failed: failed,
+                agents_active: active,
+                agents_idle: idle,
+                avg_energy: cs.energy,
+                completed_streak: 0,
+            }, cs.energy)
+        };
+        let new_patterns = {
+            let mut patterns = state.patterns.lock().await;
+            patterns.analyze(&stats)
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+        };
+        if !new_patterns.is_empty() {
+            tracing::info!("Post-goal mini-evolution: {} new patterns", new_patterns.len());
+        }
+    }
+
+    // Persist finalized goal and updated agent stats
+    {
+        let registry = state.agents.lock().await;
+        if let Some(goal) = registry.get_goal(goal_id) {
+            if let Some(json) = serialize_goal(goal) {
+                if let Err(e) = state.store.save_goal(goal_id, &json) {
+                    tracing::warn!("failed to persist finalized goal {}: {e}", goal_id);
+                }
+            }
+        }
+        for agent in registry.list_agents() {
+            if let Ok(json) = serde_json::to_string(&agent) {
+                let role_str = format!("{:?}", agent.role);
+                if let Err(e) = state.store.save_agent_stats(&role_str, &json) {
+                    tracing::warn!("failed to persist agent stats for {:?}: {e}", agent.role);
+                }
+            }
+        }
     }
 
     // Build and store QLANG graph for this goal execution

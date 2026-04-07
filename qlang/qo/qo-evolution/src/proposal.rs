@@ -101,6 +101,16 @@ impl ProposalEngine {
     pub fn all(&self) -> &[Proposal] {
         &self.proposals
     }
+
+    /// Restore a previously persisted proposal. Keeps next_id consistent.
+    pub fn restore_proposal(&mut self, proposal: Proposal) {
+        if proposal.id >= self.next_id {
+            self.next_id = proposal.id + 1;
+        }
+        if !self.proposals.iter().any(|p| p.id == proposal.id) {
+            self.proposals.push(proposal);
+        }
+    }
 }
 
 impl Default for ProposalEngine {

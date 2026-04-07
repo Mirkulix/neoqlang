@@ -201,6 +201,28 @@ impl AgentRegistry {
         executor::summarize_goal(llm, goal).await
     }
 
+    /// Load a previously persisted goal back into the registry.
+    pub fn restore_goal(&mut self, goal: Goal) {
+        // Keep next_goal_id ahead of any restored id
+        if goal.id >= self.next_goal_id {
+            self.next_goal_id = goal.id + 1;
+        }
+        // Avoid duplicates on double-load
+        if !self.goals.iter().any(|g| g.id == goal.id) {
+            self.goals.push(goal);
+        }
+    }
+
+    /// Restore agent task counters (tasks_completed / tasks_failed) from persisted stats.
+    /// Resets status to Idle regardless of stored status to avoid stale Active states after restart.
+    pub fn restore_agent_stats(&mut self, role: AgentRole, tasks_completed: u32, tasks_failed: u32) {
+        if let Some(agent) = self.agents.get_mut(&role) {
+            agent.tasks_completed = tasks_completed;
+            agent.tasks_failed = tasks_failed;
+            agent.status = AgentStatus::Idle;
+        }
+    }
+
     /// Finalize: update CEO stats and mark goal complete.
     pub fn finalize_goal(&mut self, goal_id: u64) {
         let succeeded = self
