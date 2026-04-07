@@ -2,3 +2,14 @@
 name = "qo-memory"
 version.workspace = true
 edition.workspace = true
+description = "QO memory — Obsidian vault + HNSW vector store + redb"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+redb = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
