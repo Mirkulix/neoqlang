@@ -21,6 +21,7 @@ members = [
     "qo/qo-evolution",
     "qo/qo-simulation",
     "qo/qo-telegram",
+    "qo/qo-embed",
 ]
 resolver = "2"
 
