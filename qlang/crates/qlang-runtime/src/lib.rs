@@ -33,6 +33,7 @@ pub mod diffusion;
 pub mod hebbian;
 pub mod theorems;
 pub mod igqk;
+pub mod igqk_compress;
 pub mod config;
 pub mod types;
 pub mod unified;

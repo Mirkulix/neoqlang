@@ -1259,20 +1259,33 @@ fn tensor_to_ternary(a: &TensorData) -> Result<TensorData, ExecutionError> {
         "to_ternary: input not f32".into(),
     ))?;
 
-    // Compute threshold
-    let mean_abs: f32 = va.iter().map(|x| x.abs()).sum::<f32>() / va.len() as f32;
-    let threshold = mean_abs * 0.7;
+    // Use IGQK adaptive threshold: std_dev * 0.5 (Born-rule collapse from the paper).
+    // This replaces the old mean-abs * 0.7 heuristic with the theoretically grounded value.
+    let igqk_result =
+        crate::igqk_compress::compress_ternary(&va, &crate::igqk_compress::IgqkParams::default());
+    let threshold = if let Some(&alpha) = igqk_result.scaling_factors.first() {
+        // Recompute threshold from the same formula used inside compress_ternary
+        let n = va.len() as f32;
+        let mean: f32 = va.iter().sum::<f32>() / n;
+        let std_dev: f32 =
+            (va.iter().map(|w| (w - mean).powi(2)).sum::<f32>() / n).sqrt();
+        let _ = alpha; // alpha is the scaling factor; threshold drives +/-/0 split
+        std_dev * 0.5
+    } else {
+        // Fallback: original heuristic
+        va.iter().map(|x| x.abs()).sum::<f32>() / va.len() as f32 * 0.7
+    };
 
-    // Project to ternary
+    // Project to ternary (Dtype::Ternary uses u8 encoding)
     let result: Vec<u8> = va
         .iter()
         .map(|&x| {
             if x > threshold {
-                1u8 // represents +1 as i8
+                1u8   // represents +1
             } else if x < -threshold {
-                255u8 // represents -1 as i8 (two's complement)
+                255u8 // represents -1 (two's complement i8)
             } else {
-                0u8 // represents 0
+                0u8   // represents 0
             }
         })
         .collect();
