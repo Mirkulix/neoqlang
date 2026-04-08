@@ -14,6 +14,15 @@ use qlang_core::tensor::{Dtype, Shape, TensorType, TensorData};
 
 use crate::AppState;
 
+/// QO's QLANG-native intent classifier — trained in Rust, ternary, no Python
+/// Runs in <1ms, classifies: Chat/Goal/Question/Creative
+fn classify_with_qlang_model(text: &str) -> (qo_agents::qlang_model::Intent, Vec<f32>) {
+    // Train model on first call (cached in memory after)
+    // In production this would be loaded from disk
+    let (model, _) = qo_agents::qlang_model::train_intent_model();
+    qo_agents::qlang_model::classify_intent(&model, text)
+}
+
 /// Build a REAL QLANG graph for a chat interaction.
 /// This graph is executed by qlang_runtime::executor::execute().
 fn build_chat_qlang_graph(system_prompt: &str, user_message: &str) -> Graph {
@@ -125,8 +134,18 @@ pub async fn chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (axum::http::StatusCode, String)> {
-    // Detect goal-like messages and route them to the agent system
-    let goal_prefix = if looks_like_goal(&req.message) {
+    // Classify intent using QO's QLANG-native model (Tier 0 — no LLM needed)
+    let (intent, intent_probs) = classify_with_qlang_model(&req.message);
+    tracing::info!(
+        "QLANG model classified '{}' as {:?} (probs: {:?})",
+        &req.message[..req.message.len().min(40)],
+        intent,
+        intent_probs.iter().map(|p| format!("{:.2}", p)).collect::<Vec<_>>()
+    );
+
+    // Route based on QLANG model classification (replaces old string-matching heuristic)
+    let is_goal = intent == qo_agents::qlang_model::Intent::Goal;
+    let goal_prefix = if is_goal {
         let goal_id = {
             let mut registry = state.agents.lock().await;
             let goal = registry.create_goal(req.message.clone());
