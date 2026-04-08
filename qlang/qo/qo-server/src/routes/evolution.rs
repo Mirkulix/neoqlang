@@ -228,14 +228,42 @@ pub async fn analyze(
         }
     }
 
-    // Build and store QLANG graph for this evolution cycle
+    // Build and store QLANG graph for this evolution cycle — JSON + QLBG binary
     {
         let graph = graph_builders::build_evolution_graph(
             detected_pattern_names.len(),
             new_proposals.len(),
         );
-        if let Err(e) = state.graph_store.store(&graph) {
-            tracing::warn!("failed to store evolution graph: {e}");
+        let store_id = match state.graph_store.store(&graph) {
+            Ok(id) => id,
+            Err(e) => { tracing::warn!("failed to store evolution graph: {e}"); 0 }
+        };
+
+        // Real QLANG graph for evolution
+        let mut qlang_graph = qlang_core::graph::Graph::new("evolution_cycle");
+        let str_type = qlang_core::tensor::TensorType::new(
+            qlang_core::tensor::Dtype::Utf8,
+            qlang_core::tensor::Shape::scalar(),
+        );
+        let input = qlang_graph.add_node(
+            qlang_core::ops::Op::Input { name: "stats".into() },
+            vec![], vec![str_type.clone()],
+        );
+        let analyze = qlang_graph.add_node(
+            qlang_core::ops::Op::Entropy, // Pattern analysis as entropy measurement
+            vec![str_type.clone()], vec![str_type.clone()],
+        );
+        let output = qlang_graph.add_node(
+            qlang_core::ops::Op::Output { name: "patterns".into() },
+            vec![str_type.clone()], vec![],
+        );
+        qlang_graph.add_edge(input, 0, analyze, 0, str_type.clone());
+        qlang_graph.add_edge(analyze, 0, output, 0, str_type.clone());
+
+        let binary = qlang_core::binary::to_binary(&qlang_graph);
+        tracing::info!("Evolution QLANG graph: {} nodes, {} bytes .qlbg", qlang_graph.nodes.len(), binary.len());
+        if let Err(e) = state.graph_store.store_binary_graph(store_id, &binary) {
+            tracing::warn!("failed to store evolution QLBG binary: {e}");
         }
     }
 

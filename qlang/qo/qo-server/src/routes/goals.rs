@@ -290,7 +290,7 @@ pub async fn execute_goal_background(
         }
     }
 
-    // Build and store QLANG graph for this goal execution
+    // Build and store QLANG graph for this goal execution — both JSON metadata AND real QLBG binary
     {
         let total_duration_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -298,8 +298,45 @@ pub async fn execute_goal_background(
             .as_millis() as u64
             - goal_start_ms;
         let graph = graph_builders::build_goal_graph(&description, &subtask_results, total_duration_ms);
-        if let Err(e) = state.graph_store.store(&graph) {
-            tracing::warn!("failed to store goal graph: {e}");
+        let store_id = match state.graph_store.store(&graph) {
+            Ok(id) => id,
+            Err(e) => { tracing::warn!("failed to store goal graph metadata: {e}"); 0 }
+        };
+
+        // Build a REAL QLANG graph for this goal and store as QLBG binary
+        let mut qlang_graph = qlang_core::graph::Graph::new(format!("goal_{}", goal_id));
+        let str_type = qlang_core::tensor::TensorType::new(
+            qlang_core::tensor::Dtype::Utf8,
+            qlang_core::tensor::Shape::scalar(),
+        );
+        let input = qlang_graph.add_node(
+            qlang_core::ops::Op::Input { name: "goal".into() },
+            vec![], vec![str_type.clone()],
+        );
+        // Add a node per subtask agent
+        let mut prev_node = input;
+        for (agent_name, task_desc, succeeded, _dur) in &subtask_results {
+            let model = if *succeeded { "completed" } else { "failed" };
+            let node = qlang_graph.add_node(
+                qlang_core::ops::Op::OllamaChat { model: format!("agent_{agent_name}_{model}") },
+                vec![str_type.clone()], vec![str_type.clone()],
+            );
+            qlang_graph.add_edge(prev_node, 0, node, 0, str_type.clone());
+            prev_node = node;
+        }
+        let output = qlang_graph.add_node(
+            qlang_core::ops::Op::Output { name: "result".into() },
+            vec![str_type.clone()], vec![],
+        );
+        qlang_graph.add_edge(prev_node, 0, output, 0, str_type.clone());
+
+        let binary = qlang_core::binary::to_binary(&qlang_graph);
+        tracing::info!(
+            "Goal #{} QLANG graph: {} nodes, {} edges, {} bytes .qlbg",
+            goal_id, qlang_graph.nodes.len(), qlang_graph.edges.len(), binary.len()
+        );
+        if let Err(e) = state.graph_store.store_binary_graph(store_id, &binary) {
+            tracing::warn!("failed to store goal QLBG binary: {e}");
         }
     }
 
