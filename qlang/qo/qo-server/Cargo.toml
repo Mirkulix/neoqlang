@@ -12,6 +12,8 @@ qo-llm = { path = "../qo-llm" }
 qo-memory = { path = "../qo-memory" }
 qo-simulation = { path = "../qo-simulation" }
 qo-values = { path = "../qo-values" }
+qlang-core = { workspace = true }
+qlang-runtime = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }

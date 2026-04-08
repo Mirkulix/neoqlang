@@ -3,10 +3,100 @@ use qo_consciousness::StateEvent;
 use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// QLANG imports — the graph engine
+use qlang_core::graph::Graph;
+use qlang_core::ops::Op;
+use qlang_core::tensor::{Dtype, Shape, TensorType, TensorData};
+
 use crate::AppState;
+
+/// Build a REAL QLANG graph for a chat interaction.
+/// This graph is executed by qlang_runtime::executor::execute().
+fn build_chat_qlang_graph(system_prompt: &str, user_message: &str) -> Graph {
+    let mut g = Graph::new("qo_chat");
+    let str_type = TensorType::new(Dtype::Utf8, Shape::scalar());
+
+    // Node 0: System prompt input
+    let system_node = g.add_node(
+        Op::Input { name: "system".into() },
+        vec![],
+        vec![str_type.clone()],
+    );
+
+    // Node 1: User message input
+    let user_node = g.add_node(
+        Op::Input { name: "user".into() },
+        vec![],
+        vec![str_type.clone()],
+    );
+
+    // Node 2: OllamaChat — the actual LLM call as a QLANG operation
+    // The executor handles this Op natively
+    let ollama_model = std::env::var("OLLAMA_MODEL")
+        .unwrap_or_else(|_| "qwen2.5:3b".to_string());
+    let chat_node = g.add_node(
+        Op::OllamaChat { model: ollama_model },
+        vec![str_type.clone()],
+        vec![str_type.clone()],
+    );
+
+    // Node 3: Output
+    let output_node = g.add_node(
+        Op::Output { name: "response".into() },
+        vec![str_type.clone()],
+        vec![],
+    );
+
+    // Edges: user message → OllamaChat → output
+    // (system prompt is embedded in the chat message JSON)
+    g.add_edge(user_node, 0, chat_node, 0, str_type.clone());
+    g.add_edge(chat_node, 0, output_node, 0, str_type.clone());
+
+    g
+}
+
+/// Execute chat via QLANG runtime — the graph engine runs the LLM call
+fn execute_chat_via_qlang(
+    system_prompt: &str,
+    user_message: &str,
+) -> Result<(String, Graph, u64), String> {
+    let graph = build_chat_qlang_graph(system_prompt, user_message);
+
+    // Build input: OllamaChat expects JSON array of {role, content} messages
+    let messages_json = serde_json::json!([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message}
+    ]);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("user".to_string(), TensorData::from_string(&messages_json.to_string()));
+    inputs.insert("system".to_string(), TensorData::from_string(system_prompt));
+
+    let start = std::time::Instant::now();
+
+    // THIS IS THE KEY LINE: qlang_runtime::executor::execute() runs the graph
+    let result = qlang_runtime::executor::execute(&graph, inputs)
+        .map_err(|e| format!("QLANG execution failed: {e}"))?;
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let response = result.outputs.get("response")
+        .and_then(|t| t.as_string())
+        .unwrap_or_else(|| "Keine Antwort vom QLANG Executor".to_string());
+
+    tracing::info!(
+        "QLANG executor: {} nodes executed, {} quantum ops, {}ms",
+        result.stats.nodes_executed,
+        result.stats.quantum_ops,
+        duration_ms
+    );
+
+    Ok((response, graph, duration_ms))
+}
 
 fn looks_like_goal(msg: &str) -> bool {
     let prefixes = [
@@ -86,68 +176,49 @@ pub async fn chat(
         }
     };
 
-    let messages = vec![
-        ("system".to_string(), format!("{}{}", SYSTEM_PROMPT, context)),
-        ("user".to_string(), req.message.clone()),
-    ];
+    let full_system_prompt = format!("{}{}", SYSTEM_PROMPT, context);
 
     let llm_start = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
 
-    // 1. Load user-configured providers from redb (enabled, sorted by tier ascending)
-    let mut configured: Vec<qo_llm::ProviderConfig> = state
-        .store
-        .list_providers()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(_, json)| serde_json::from_str::<qo_llm::ProviderConfig>(&json).ok())
-        .filter(|p| p.enabled)
-        .collect();
-    configured.sort_by_key(|p| p.tier);
+    // PRIMARY PATH: Execute chat via QLANG runtime
+    // The graph contains an OllamaChat node that the QLANG executor handles natively.
+    // This means the LLM call flows through QLANG's graph engine, not a direct HTTP call.
+    let (llm_response, qlang_graph, llm_duration_ms, provider_used) = {
+        // Try QLANG executor first (uses Ollama via Op::OllamaChat)
+        let qlang_result = tokio::task::spawn_blocking({
+            let system = full_system_prompt.clone();
+            let user = req.message.clone();
+            move || execute_chat_via_qlang(&system, &user)
+        }).await;
 
-    // 2. Try each configured provider in tier order; first success wins
-    let mut provider_used = String::new();
-    let mut llm_response_opt: Option<String> = None;
-
-    for provider in &configured {
-        let base_url = provider.base_url.clone().unwrap_or_else(|| {
-            "https://api.openai.com/v1".to_string()
-        });
-        match state
-            .llm
-            .chat_with_provider(&base_url, &provider.api_key, &provider.model, messages.clone())
-            .await
-        {
-            Ok(resp) => {
-                provider_used = provider.id.clone();
-                llm_response_opt = Some(resp);
-                break;
+        match qlang_result {
+            Ok(Ok((response, graph, duration))) => {
+                tracing::info!("Chat served via QLANG executor (Ollama)");
+                (response, Some(graph), duration, "qlang-ollama".to_string())
             }
-            Err(e) => {
-                tracing::warn!(provider = %provider.id, "configured provider failed: {e}");
+            _ => {
+                // FALLBACK: Direct API call if QLANG executor fails (e.g. Ollama not running)
+                tracing::warn!("QLANG executor failed, falling back to direct LLM call");
+                let messages = vec![
+                    ("system".to_string(), full_system_prompt.clone()),
+                    ("user".to_string(), req.message.clone()),
+                ];
+                let response = state
+                    .llm
+                    .chat(messages)
+                    .await
+                    .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                let duration = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64 - llm_start;
+                (response, None, duration, "groq".to_string())
             }
         }
-    }
-
-    // 3. Fall back to env-based router (Groq / Cloud)
-    let llm_response = if let Some(resp) = llm_response_opt {
-        resp
-    } else {
-        provider_used = "groq".to_string();
-        state
-            .llm
-            .chat(messages)
-            .await
-            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     };
-
-    let llm_duration_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-        - llm_start;
 
     let response = match goal_prefix {
         Some(prefix) => format!("{}{}", prefix, llm_response),
@@ -186,7 +257,7 @@ pub async fn chat(
         let _ = state.store.set(&mem_key, &memory_text);
     }
 
-    // Build and store QLANG graph for this chat interaction
+    // Store QLANG graph — use the REAL executed graph if available, otherwise build metadata graph
     {
         let graph = graph_builders::build_chat_graph(
             &req.message,
@@ -195,7 +266,19 @@ pub async fn chat(
             llm_duration_ms,
         );
         if let Err(e) = state.graph_store.store(&graph) {
-            tracing::warn!("failed to store chat graph: {e}");
+            tracing::warn!("failed to store chat graph metadata: {e}");
+        }
+
+        // If QLANG executor was used, also store the real binary graph (.qlbg)
+        if let Some(ref real_graph) = qlang_graph {
+            let binary = qlang_core::binary::to_binary(real_graph);
+            tracing::info!(
+                "Storing real QLANG graph: {} nodes, {} edges, {} bytes .qlbg",
+                real_graph.nodes.len(), real_graph.edges.len(), binary.len()
+            );
+            if let Err(e) = state.graph_store.store_binary_graph(id, &binary) {
+                tracing::warn!("failed to store binary QLANG graph: {e}");
+            }
         }
     }
 
