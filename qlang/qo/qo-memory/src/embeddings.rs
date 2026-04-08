@@ -1,86 +1,31 @@
-/// Text embedding via Ollama's nomic-embed-text model.
+/// Text embedding — pure Rust via candle (all-MiniLM-L6-v2)
 ///
-/// This produces REAL 768-dimensional semantic embeddings —
-/// "Hund" and "Katze" will be close, "Hund" and "Mathematik" will be far.
+/// No Python, no Ollama, no external server.
+/// 384-dimensional real semantic embeddings.
 ///
-/// Falls back to hash-based pseudo-embeddings if Ollama is not reachable.
+/// Falls back to hash-based pseudo-embeddings if model fails to load.
 
-use std::sync::OnceLock;
-
-static OLLAMA_URL: OnceLock<String> = OnceLock::new();
-
-fn ollama_base() -> &'static str {
-    OLLAMA_URL.get_or_init(|| {
-        std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string())
-    })
-}
-
-/// Embed text using Ollama's nomic-embed-text (768 dim, real semantics).
-/// Safe to call from any context — uses a dedicated thread for the HTTP call.
+/// Embed text using the candle Rust model (384 dim, real semantics).
+/// Thread-safe, model is loaded once and cached.
 pub fn embed_text(text: &str, _dimensions: usize) -> Vec<f32> {
-    // Use a dedicated thread for the blocking HTTP call
-    // This avoids the tokio "cannot block" panic
     let text_owned = text.to_string();
-    let handle = std::thread::spawn(move || embed_via_ollama(&text_owned));
+    // Spawn a thread because candle model loading may conflict with tokio runtime
+    let handle = std::thread::spawn(move || {
+        match qo_embed::embed(&text_owned) {
+            Ok(vec) => Some(vec),
+            Err(e) => {
+                tracing::warn!("Candle embedding failed: {e}");
+                None
+            }
+        }
+    });
     match handle.join() {
         Ok(Some(vec)) => vec,
         _ => {
-            tracing::warn!("Ollama embedding failed, using hash fallback");
-            embed_hash_fallback(text, 768)
+            tracing::warn!("Embedding failed, using hash fallback");
+            embed_hash_fallback(text, 384)
         }
     }
-}
-
-/// Async version for use in async contexts
-pub async fn embed_text_async(text: &str) -> Vec<f32> {
-    match embed_via_ollama_async(text).await {
-        Some(vec) => vec,
-        None => embed_hash_fallback(text, 768),
-    }
-}
-
-fn embed_via_ollama(text: &str) -> Option<Vec<f32>> {
-    let url = format!("{}/api/embeddings", ollama_base());
-    let body = serde_json::json!({
-        "model": "nomic-embed-text",
-        "prompt": text
-    });
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .ok()?;
-
-    let resp = client.post(&url).json(&body).send().ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let json: serde_json::Value = resp.json().ok()?;
-    let embedding = json.get("embedding")?.as_array()?;
-    let vec: Vec<f32> = embedding.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
-
-    if vec.is_empty() { None } else { Some(vec) }
-}
-
-async fn embed_via_ollama_async(text: &str) -> Option<Vec<f32>> {
-    let url = format!("{}/api/embeddings", ollama_base());
-    let body = serde_json::json!({
-        "model": "nomic-embed-text",
-        "prompt": text
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client.post(&url).json(&body).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let embedding = json.get("embedding")?.as_array()?;
-    let vec: Vec<f32> = embedding.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
-
-    if vec.is_empty() { None } else { Some(vec) }
 }
 
 /// Hash-based fallback — NO semantic understanding, only exact matches work.
@@ -112,49 +57,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embed_produces_correct_dimensions() {
-        let v = embed_text("hello world", 768);
-        // Should be 768 (Ollama) or fallback dimension
-        assert!(v.len() == 768 || v.len() > 0);
+    fn embed_produces_384_dimensions() {
+        let v = embed_text("hello world", 384);
+        assert_eq!(v.len(), 384);
     }
 
     #[test]
-    fn embed_is_normalized_or_raw() {
-        let v = embed_text("test input", 768);
-        assert!(!v.is_empty());
-        // Ollama embeddings are not necessarily L2-normalized, so just check non-empty
-    }
+    fn semantic_similarity() {
+        let rust = embed_text("Rust ist eine Programmiersprache", 384);
+        let python = embed_text("Python ist eine Programmiersprache", 384);
+        let kochen = embed_text("Ich koche Pasta mit Tomaten", 384);
 
-    #[test]
-    fn semantic_similarity_test() {
-        // This test only passes with real Ollama embeddings
-        let dog = embed_text("Der Hund läuft im Park", 768);
-        let cat = embed_text("Die Katze spielt im Garten", 768);
-        let math = embed_text("Die Determinante einer Matrix berechnen", 768);
+        let sim_rp = cosine_sim(&rust, &python);
+        let sim_rk = cosine_sim(&rust, &kochen);
 
-        if dog.len() == 768 && cat.len() == 768 && math.len() == 768 {
-            let sim_dog_cat = cosine_sim(&dog, &cat);
-            let sim_dog_math = cosine_sim(&dog, &math);
+        println!("rust-python: {sim_rp:.4}");
+        println!("rust-kochen: {sim_rk:.4}");
 
-            // Dog-Cat should be more similar than Dog-Math
-            println!("dog-cat similarity: {sim_dog_cat:.4}");
-            println!("dog-math similarity: {sim_dog_math:.4}");
-
-            // Only assert if we got real embeddings (not hash fallback)
-            // Hash fallback gives random similarities
-            if dog[0].abs() > 0.01 {
-                // Real embeddings: semantic similarity should hold
-                // But don't hard-assert — model might surprise us
-                println!("dog-cat > dog-math: {}", sim_dog_cat > sim_dog_math);
-            }
+        // If candle loaded, this should hold. If hash fallback, it won't — that's okay.
+        if sim_rp > 0.3 {
+            assert!(sim_rp > sim_rk, "rust-python ({sim_rp}) should > rust-kochen ({sim_rk})");
         }
     }
 
     fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
-        dot / (norm_a * norm_b)
+        let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
     }
 }

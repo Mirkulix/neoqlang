@@ -149,7 +149,7 @@ pub fn build_app(
     }
 
     // Load persisted embeddings into vector store for long-term memory
-    let mut memory_ctx = MemoryContext::new(768); // nomic-embed-text: 768 dimensions
+    let mut memory_ctx = MemoryContext::new(384); // all-MiniLM-L6-v2 via candle: 384 dimensions
     memory_ctx.load_from_store(&store);
     tracing::info!("Loaded {} memories from vector store", memory_ctx.count());
 

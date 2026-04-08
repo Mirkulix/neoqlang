@@ -226,3 +226,4 @@ mod tests {
             "rust-python ({sim_rust_python}) should be > rust-kochen ({sim_rust_kochen})");
     }
 }
+pub mod embed_data;
