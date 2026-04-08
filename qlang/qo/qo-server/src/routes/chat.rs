@@ -14,14 +14,7 @@ use qlang_core::tensor::{Dtype, Shape, TensorType, TensorData};
 
 use crate::AppState;
 
-/// QO's QLANG-native intent classifier — trained in Rust, ternary, no Python
-/// Runs in <1ms, classifies: Chat/Goal/Question/Creative
-fn classify_with_qlang_model(text: &str) -> (qo_agents::qlang_model::Intent, Vec<f32>) {
-    // Train model on first call (cached in memory after)
-    // In production this would be loaded from disk
-    let (model, _) = qo_agents::qlang_model::train_intent_model();
-    qo_agents::qlang_model::classify_intent(&model, text)
-}
+// No wrapper needed — classify_intent_cached() handles caching via OnceLock
 
 /// Build a REAL QLANG graph for a chat interaction.
 /// This graph is executed by qlang_runtime::executor::execute().
@@ -135,7 +128,7 @@ pub async fn chat(
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (axum::http::StatusCode, String)> {
     // Classify intent using QO's QLANG-native model (Tier 0 — no LLM needed)
-    let (intent, intent_probs) = classify_with_qlang_model(&req.message);
+    let (intent, intent_probs) = qo_agents::qlang_model::classify_intent_cached(&req.message);
     tracing::info!(
         "QLANG model classified '{}' as {:?} (probs: {:?})",
         &req.message[..req.message.len().min(40)],
