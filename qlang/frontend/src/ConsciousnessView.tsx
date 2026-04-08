@@ -74,15 +74,26 @@ export default function ConsciousnessView() {
   }
 
   useEffect(() => {
+    // Always load state immediately via polling (SSE only fires on events)
+    fetch('/api/consciousness/state')
+      .then(r => r.json())
+      .then(applyState)
+      .catch(() => {})
+
+    // Poll every 5 seconds as baseline (SSE supplements with real-time events)
+    pollRef.current = setInterval(() => {
+      fetch('/api/consciousness/state')
+        .then(r => r.json())
+        .then(applyState)
+        .catch(() => {})
+    }, 5000)
+
+    // SSE for real-time events (chat, goals, evolution trigger state updates)
     const es = new EventSource('/api/consciousness/stream')
     esRef.current = es
 
     es.onopen = () => {
       setConnected(true)
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
     }
 
     es.onmessage = (event) => {
@@ -97,7 +108,6 @@ export default function ConsciousnessView() {
     es.onerror = () => {
       setConnected(false)
       es.close()
-      startPolling()
     }
 
     return () => {
