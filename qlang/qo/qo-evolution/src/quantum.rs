@@ -61,8 +61,9 @@ impl QuantumState {
         let hamiltonian = quantum_flow::construct_hamiltonian(dim, &rho.eigenvalues);
 
         // Evolve using REAL quantum gradient flow: dρ/dt = -i[H,ρ] - γ{G⁻¹∇L, ρ}
-        let gamma = 0.01;
-        let dt = 0.01;
+        // gamma and dt tuned so changes are visible after 1-5 goals
+        let gamma = 0.5;
+        let dt = 0.5;
         let new_rho = quantum_flow::evolve_step(rho, &hamiltonian, &gradient, gamma, dt);
 
         // Update state

@@ -108,11 +108,11 @@ pub fn tool_shell(cmd: &str) -> ToolResult {
     }
 }
 
-/// Search the web via DuckDuckGo Lite (no API key needed)
+/// Search the web via DuckDuckGo Instant Answer API (no API key needed, JSON response)
 pub async fn tool_web_search(query: &str) -> ToolResult {
     let client = reqwest::Client::new();
     let url = format!(
-        "https://lite.duckduckgo.com/lite/?q={}",
+        "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         urlencoding::encode(query)
     );
 
@@ -123,15 +123,39 @@ pub async fn tool_web_search(query: &str) -> ToolResult {
         .await
     {
         Ok(resp) => match resp.text().await {
-            Ok(html) => {
-                let snippets = extract_search_snippets(&html);
+            Ok(body) => {
+                let mut parts = Vec::new();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    // Abstract text (main summary)
+                    if let Some(text) = json.get("AbstractText").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            parts.push(format!("Zusammenfassung: {text}"));
+                        }
+                    }
+                    // Abstract source
+                    if let Some(src) = json.get("AbstractSource").and_then(|v| v.as_str()) {
+                        if !src.is_empty() {
+                            parts.push(format!("Quelle: {src}"));
+                        }
+                    }
+                    // Related topics
+                    if let Some(topics) = json.get("RelatedTopics").and_then(|v| v.as_array()) {
+                        for topic in topics.iter().take(5) {
+                            if let Some(text) = topic.get("Text").and_then(|v| v.as_str()) {
+                                if !text.is_empty() {
+                                    parts.push(format!("- {}", &text[..text.len().min(200)]));
+                                }
+                            }
+                        }
+                    }
+                }
                 ToolResult {
                     tool: "web_search".into(),
-                    success: true,
-                    output: if snippets.is_empty() {
-                        "Keine Ergebnisse gefunden.".into()
+                    success: !parts.is_empty(),
+                    output: if parts.is_empty() {
+                        format!("Keine direkten Ergebnisse für '{}'. DuckDuckGo Instant Answer API liefert nur bei bekannten Themen.", query)
                     } else {
-                        snippets.join("\n\n")
+                        parts.join("\n\n")
                     },
                 }
             }
@@ -147,28 +171,6 @@ pub async fn tool_web_search(query: &str) -> ToolResult {
             output: format!("Error: {e}"),
         },
     }
-}
-
-fn extract_search_snippets(html: &str) -> Vec<String> {
-    let mut snippets = Vec::new();
-    // Simple extraction: find text between <td> tags that contain result snippets
-    // DuckDuckGo Lite uses <a class="result-link"> for titles and <td class="result-snippet"> for snippets
-    for line in html.lines() {
-        let line = line.trim();
-        if line.contains("result-snippet")
-            || (line.contains("<td>") && line.len() > 50 && !line.contains("<script"))
-        {
-            let text = strip_html_tags(line);
-            let text = text.trim().to_string();
-            if text.len() > 30 && !text.contains("DuckDuckGo") {
-                snippets.push(text);
-                if snippets.len() >= 5 {
-                    break;
-                }
-            }
-        }
-    }
-    snippets
 }
 
 fn strip_html_tags(s: &str) -> String {
