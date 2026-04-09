@@ -8,6 +8,7 @@ import {
   Dna,
   GitBranch,
   Clock,
+  Mail,
   Sun,
   Moon,
 } from 'lucide-react'
@@ -19,9 +20,11 @@ import EvolutionView from './EvolutionView'
 import GraphsView from './GraphsView'
 import HistorieView from './HistorieView'
 import ProviderView from './ProviderView'
+import MessagesView from './MessagesView'
+import TrainingView from './TrainingView'
 import ActivityFeed from './ActivityFeed'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'historie'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'historie'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
@@ -31,6 +34,8 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'provider', label: 'Provider', icon: Server },
   { id: 'evolution', label: 'Evolution', icon: Dna },
   { id: 'graphs', label: 'QLANG', icon: GitBranch },
+  { id: 'messages', label: 'Messages', icon: Mail },
+  { id: 'training', label: 'Training', icon: Dna },
   { id: 'historie', label: 'Historie', icon: Clock },
 ]
 
@@ -43,6 +48,8 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
     case 'provider': return <ProviderView />
     case 'evolution': return <EvolutionView />
     case 'graphs': return <GraphsView />
+    case 'messages': return <MessagesView />
+    case 'training': return <TrainingView />
     case 'historie': return <HistorieView onNavigate={onNavigate} />
   }
 }

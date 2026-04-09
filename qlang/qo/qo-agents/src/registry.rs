@@ -1,10 +1,12 @@
 use crate::agent::{Agent, AgentRole, AgentStatus};
 use crate::goal::{Goal, GoalStatus};
 use crate::executor;
+use qlang_agent::bus::MessageBus;
 use qo_evolution::QuantumState;
 use qo_llm::LlmRouter;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
 pub struct AgentSummary {
@@ -80,11 +82,13 @@ impl AgentRegistry {
 
     /// Execute a goal. Marks involved agents as active, then idle.
     /// Returns (chosen_strategy_name, goal_succeeded) on success.
+    /// When a MessageBus is provided, all agent communication flows through it.
     pub async fn execute_goal(
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
         quantum_state: Option<&QuantumState>,
+        bus: Option<Arc<MessageBus>>,
     ) -> Result<(String, bool), Box<dyn std::error::Error + Send + Sync>> {
         // Mark CEO active
         if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
@@ -97,7 +101,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        let result = executor::execute_goal_qlang(llm, goal, quantum_state).await;
+        let result = executor::execute_goal_qlang(llm, goal, quantum_state, bus).await;
 
         // Update agent stats based on subtask results
         if let Some(goal) = self.goals.iter().find(|g| g.id == goal_id) {

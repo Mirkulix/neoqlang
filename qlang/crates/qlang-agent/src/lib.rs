@@ -14,6 +14,8 @@
 //!
 //! 4 decisions instead of 47 tokens. Each decision is valid by construction.
 
+pub mod bridge;
+pub mod bus;
 pub mod compose;
 pub mod diff;
 pub mod distributed;

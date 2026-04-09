@@ -2,10 +2,12 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use qlang_agent::protocol::{self, AgentId, Capability, MessageIntent};
 use qo_agents::{ExecutionGraph, Goal};
 use qo_evolution::SystemStats;
 use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -102,6 +104,29 @@ pub async fn execute_goal_background(
         "progress",
     );
 
+    // Send QLMS message: CEO starts goal decomposition via MessageBus
+    {
+        let bus = &state.message_bus;
+        let ceo_graph = qo_agents::executor::build_ceo_decompose_graph("goal_start");
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "goal".to_string(),
+            qlang_core::tensor::TensorData::from_string(&description),
+        );
+        let msg = qlang_agent::protocol::GraphMessage {
+            id: protocol::next_msg_id(),
+            from: AgentId { name: "ceo".into(), capabilities: vec![Capability::Execute] },
+            to: AgentId { name: "researcher".into(), capabilities: vec![Capability::Execute] },
+            graph: ceo_graph,
+            inputs,
+            intent: MessageIntent::Execute,
+            in_reply_to: None,
+            signature: None, signer_pubkey: None, graph_hash: None,
+        };
+        let status = bus.send(msg).await;
+        tracing::info!("MessageBus: CEO → team (goal_start): {:?}", status);
+    }
+
     // We need to execute the goal step by step with activity events.
     // First, do the decomposition phase — pass quantum state for strategy steering.
     let decompose_result = {
@@ -141,7 +166,7 @@ pub async fn execute_goal_background(
         registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone()).await
     };
 
-    // Publish per-subtask activity events and build results for graph
+    // Publish per-subtask activity events, send QLMS result messages, and build results for graph
     let mut subtask_results: Vec<(String, String, bool, u64)> = Vec::new();
     for (_, agent_name, task_desc, succeeded, duration_ms) in &parallel_outcomes {
         if *succeeded {
@@ -156,6 +181,27 @@ pub async fn execute_goal_background(
                 Some(agent_name.clone()),
                 "error",
             );
+        }
+        // Send QLMS result message: Agent → CEO via MessageBus
+        {
+            let result_graph = qo_agents::executor::build_agent_task_graph(&agent_name.to_lowercase());
+            let mut inputs = HashMap::new();
+            let status_text = if *succeeded { "completed" } else { "failed" };
+            inputs.insert(
+                "task".to_string(),
+                qlang_core::tensor::TensorData::from_string(&format!("{}: {}", status_text, task_desc)),
+            );
+            let msg = qlang_agent::protocol::GraphMessage {
+                id: protocol::next_msg_id(),
+                from: AgentId { name: agent_name.to_lowercase(), capabilities: vec![Capability::Execute] },
+                to: AgentId { name: "ceo".into(), capabilities: vec![Capability::Execute] },
+                graph: result_graph,
+                inputs,
+                intent: MessageIntent::Result { original_message_id: 0 },
+                in_reply_to: None,
+                signature: None, signer_pubkey: None, graph_hash: None,
+            };
+            let _ = state.message_bus.send(msg).await;
         }
         subtask_results.push((agent_name.clone(), task_desc.clone(), *succeeded, *duration_ms));
     }

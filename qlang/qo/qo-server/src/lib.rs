@@ -6,6 +6,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use qlang_agent::bus::MessageBus;
 use qo_agents::{AgentRegistry, AgentRole};
 use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
@@ -29,6 +30,8 @@ pub struct AppState {
     pub quantum: Mutex<QuantumState>,
     pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
     pub memory: Mutex<MemoryContext>,
+    /// QLANG Message Bus — routes GraphMessages between AI agents.
+    pub message_bus: Arc<MessageBus>,
 }
 
 pub struct QoConfig {
@@ -63,7 +66,7 @@ impl Default for QoConfig {
     }
 }
 
-pub fn build_app(
+pub async fn build_app(
     config: QoConfig,
 ) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error + Send + Sync>> {
     let db_path = config.data_dir.join("qo.redb");
@@ -176,6 +179,9 @@ pub fn build_app(
         quantum_st.generation,
     );
 
+    // Initialize the QLANG Message Bus for AI-to-AI communication
+    let message_bus = MessageBus::new();
+
     let state = Arc::new(AppState {
         llm,
         store,
@@ -189,7 +195,38 @@ pub fn build_app(
         quantum: Mutex::new(quantum_st),
         configured_providers: Mutex::new(configured_providers),
         memory: Mutex::new(memory_ctx),
+        message_bus: message_bus.clone(),
     });
+
+    // Register all QO agents on the message bus.
+    // Mailboxes are kept alive in background tasks that drain messages.
+    {
+        use qlang_agent::protocol::{AgentId, Capability};
+        let agent_names = ["ceo", "researcher", "developer", "guardian", "strategist", "artisan"];
+        for name in &agent_names {
+            let agent_id = AgentId {
+                name: name.to_string(),
+                capabilities: vec![Capability::Execute],
+            };
+            let mut mailbox = message_bus.register(agent_id).await;
+            // Keep mailbox alive in a background task that logs received messages
+            let agent_name = name.to_string();
+            tokio::spawn(async move {
+                loop {
+                    match mailbox.recv().await {
+                        Some(msg) => {
+                            tracing::debug!(
+                                "Agent '{}' received QLMS message from '{}' (intent: {:?})",
+                                agent_name, msg.from.name, msg.intent
+                            );
+                        }
+                        None => break, // Channel closed
+                    }
+                }
+            });
+        }
+        tracing::info!("Message bus: {} agents registered with active mailboxes", agent_names.len());
+    }
 
     let api_router = Router::new()
         .route("/api/health", get(routes::health::health))
@@ -232,6 +269,12 @@ pub fn build_app(
         .route("/api/simulation/strategies", get(routes::simulation::list_strategies))
         .route("/api/memory/stats", get(routes::memory::memory_stats))
         .route("/api/memory/search", get(routes::memory::memory_search))
+        .route("/api/messages/stats", get(routes::messages::bus_stats))
+        .route("/api/messages/agents", get(routes::messages::bus_agents))
+        .route("/api/messages/conversations", get(routes::messages::bus_conversations))
+        .route("/api/messages/stream", get(routes::messages::bus_stream))
+        .route("/api/proof/tensor-exchange", post(routes::proof::tensor_exchange))
+        .route("/api/training/qlang", post(routes::training::train_qlang))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

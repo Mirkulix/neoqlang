@@ -7,5 +7,8 @@ pub mod graphs;
 pub mod health;
 pub mod history;
 pub mod memory;
+pub mod messages;
+pub mod proof;
 pub mod providers;
+pub mod training;
 pub mod simulation;

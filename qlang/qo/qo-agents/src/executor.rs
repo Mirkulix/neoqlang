@@ -10,8 +10,10 @@ use qlang_core::binary;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
 use qlang_core::tensor::{Dtype, Shape, TensorType};
-use qlang_agent::protocol::{AgentId, Capability, GraphMessage, MessageIntent};
+use qlang_agent::bus::MessageBus;
+use qlang_agent::protocol::{self, AgentId, Capability, GraphMessage, MessageIntent};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -221,12 +223,12 @@ impl Default for ExecutionGraphData {
 
 /// Execute a goal: CEO decomposes it, each subtask is handled by the
 /// assigned agent. Real QLANG graphs are built, serialised to binary
-/// (.qlbg), and QLMS GraphMessages are sent between agents.
+/// (.qlbg), and QLMS GraphMessages are sent between agents via the MessageBus.
 pub async fn execute_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (graph_data, chosen_strategy, _succeeded) = execute_goal_qlang(llm, goal, None).await?;
+    let (graph_data, chosen_strategy, _succeeded) = execute_goal_qlang(llm, goal, None, None).await?;
 
     // Log QLANG graph stats
     tracing::info!(
@@ -245,10 +247,15 @@ pub async fn execute_goal(
 
 /// Core implementation: builds real QLANG graphs and executes them.
 /// Returns (graph_data, chosen_strategy_name, goal_succeeded).
+///
+/// When a `MessageBus` is provided, all agent-to-agent communication
+/// flows through it as real QLMS GraphMessages. Without a bus, messages
+/// are built but not routed (legacy behavior).
 pub async fn execute_goal_qlang(
     llm: &LlmRouter,
     goal: &mut Goal,
     quantum_state: Option<&QuantumState>,
+    bus: Option<Arc<MessageBus>>,
 ) -> Result<(ExecutionGraphData, String, bool), Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
     let mut graph_data = ExecutionGraphData::new();
@@ -286,8 +293,12 @@ pub async fn execute_goal_qlang(
     let ceo_bytes = binary::to_binary(&ceo_graph);
     graph_data.add_graph("ceo_decompose", &ceo_graph, ceo_bytes.len());
 
-    // Build QLMS message CEO → (itself, broadcasting)
-    let _ceo_msg = build_agent_message("ceo", "team", ceo_graph.clone(), &goal.description);
+    // Send QLMS message CEO → team via MessageBus
+    let ceo_msg = build_agent_message("ceo", "researcher", ceo_graph.clone(), &goal.description);
+    if let Some(ref bus) = bus {
+        let status = bus.send(ceo_msg).await;
+        tracing::debug!("CEO broadcast: {:?}", status);
+    }
 
     // --- Step 2a: Run simulation to predict best strategy ---
     let (sim_strategy, sim_confidence) = simulate_before_execution(&goal.description);
@@ -414,9 +425,13 @@ pub async fn execute_goal_qlang(
         let agent_bytes = binary::to_binary(&agent_graph);
         graph_data.add_graph(&graph_name, &agent_graph, agent_bytes.len());
 
-        // QLMS: CEO dispatches task to agent via GraphMessage
+        // QLMS: CEO dispatches task to agent via GraphMessage through MessageBus
         let task_text = goal.subtasks[i].description.clone();
-        let _msg = build_agent_message("ceo", &agent_name_lower, agent_graph, &task_text);
+        let dispatch_msg = build_agent_message("ceo", &agent_name_lower, agent_graph, &task_text);
+        if let Some(ref bus) = bus {
+            let status = bus.send(dispatch_msg).await;
+            tracing::debug!("CEO → {}: {:?}", agent_name_lower, status);
+        }
 
         goal.subtasks[i].status = GoalStatus::InProgress;
         let goal_desc = goal.description.clone();
@@ -426,9 +441,29 @@ pub async fn execute_goal_qlang(
         match llm_node::agent_execute_with_tools(llm, agent_role, &goal_desc, &task_text, &values).await {
             Ok(result) => {
                 let sub_ms = now_ms() - t_sub;
-                goal.subtasks[i].result = Some(result);
+                goal.subtasks[i].result = Some(result.clone());
                 goal.subtasks[i].status = GoalStatus::Completed;
                 graph_data.record_execution(&graph_name, sub_ms, true);
+
+                // Send result back to CEO via MessageBus
+                if let Some(ref bus) = bus {
+                    let result_graph = build_agent_task_graph(&agent_name_lower);
+                    let mut result_inputs = HashMap::new();
+                    result_inputs.insert("task".to_string(), qlang_core::tensor::TensorData::from_string(&result));
+                    let reply = GraphMessage {
+                        id: protocol::next_msg_id(),
+                        from: AgentId { name: agent_name_lower.clone(), capabilities: vec![Capability::Execute] },
+                        to: AgentId { name: "ceo".into(), capabilities: vec![Capability::Execute] },
+                        graph: result_graph,
+                        inputs: result_inputs,
+                        intent: MessageIntent::Result { original_message_id: 0 },
+                        in_reply_to: None,
+                        signature: None,
+                        signer_pubkey: None,
+                        graph_hash: None,
+                    };
+                    bus.send(reply).await;
+                }
 
                 let node_id = format!("subtask_{}", i);
                 if let Some(n) = nodes.iter_mut().find(|n| n.id == node_id) {

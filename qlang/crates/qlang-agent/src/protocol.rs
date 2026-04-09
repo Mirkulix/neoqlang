@@ -255,6 +255,18 @@ pub enum MessageIntent {
     Train { epochs: usize },
 }
 
+/// Generate a globally unique message ID (timestamp + counter).
+pub fn next_msg_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    (ts << 16) | (seq & 0xFFFF)
+}
+
 /// A conversation between agents: sequence of graph messages.
 #[derive(Debug)]
 pub struct AgentConversation {

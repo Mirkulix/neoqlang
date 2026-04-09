@@ -149,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let port = config.port;
-    let (app, state) = qo_server::build_app(config).map_err(|e| format!("{e}"))?;
+    let (app, state) = qo_server::build_app(config).await.map_err(|e| format!("{e}"))?;
 
     // Import Orbit data if available
     let import_dir = std::path::PathBuf::from("data/orbit-import");
