@@ -176,7 +176,7 @@ impl TernaryModel {
 // CLI Commands
 // ============================================================
 
-fn cmd_train(data_path: &str, epochs: usize, output: &str) {
+fn cmd_train(data_path: &str, epochs: usize, output: &str, hidden_layers: &[usize]) {
     println!("QLANG Train — Forward-Forward Ternary\n");
 
     // Load data
@@ -191,8 +191,8 @@ fn cmd_train(data_path: &str, epochs: usize, output: &str) {
         }
     };
 
-    let train_limit = data.n_train.min(10000);
-    let test_limit = data.n_test.min(2000);
+    let train_limit = data.n_train.min(60000);
+    let test_limit = data.n_test.min(10000);
     let train_images = &data.train_images[..train_limit * 784];
     let train_labels = &data.train_labels[..train_limit];
     let test_images = &data.test_images[..test_limit * 784];
@@ -200,7 +200,14 @@ fn cmd_train(data_path: &str, epochs: usize, output: &str) {
 
     println!("Train: {}, Test: {}, Epochs: {}\n", train_limit, test_limit, epochs);
 
-    let mut net = FFNetwork::new(&[794, 256, 128], 10);
+    // Parse hidden layers from --hidden flag or use default
+    let layer_sizes: Vec<usize> = {
+        let mut sizes = vec![794]; // 784 image + 10 label
+        sizes.extend_from_slice(&hidden_layers);
+        sizes
+    };
+    println!("Architecture: {:?}\n", layer_sizes);
+    let mut net = FFNetwork::new(&layer_sizes, 10);
     let total_start = Instant::now();
 
     for epoch in 0..epochs {
@@ -407,7 +414,9 @@ fn main() {
             let data = arg_value(&args, "--data").unwrap_or_else(|| "data/mnist".into());
             let epochs: usize = arg_value(&args, "--epochs").and_then(|s| s.parse().ok()).unwrap_or(15);
             let output = arg_value(&args, "--output").unwrap_or_else(|| "model.qlbg".into());
-            cmd_train(&data, epochs, &output);
+            let hidden_str = arg_value(&args, "--hidden").unwrap_or_else(|| "512,256,128,64".into());
+            let hidden: Vec<usize> = hidden_str.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            cmd_train(&data, epochs, &output, &hidden);
         }
         "infer" => {
             let model = arg_value(&args, "--model").unwrap_or_else(|| "model.qlbg".into());

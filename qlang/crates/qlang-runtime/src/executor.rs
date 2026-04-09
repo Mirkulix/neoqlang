@@ -5,7 +5,7 @@ use qlang_core::cache::{CacheEntry, ComputationCache};
 use qlang_core::crypto::sha256;
 use qlang_core::graph::{Graph, NodeId};
 use qlang_core::ops::Op;
-use qlang_core::tensor::TensorData;
+use qlang_core::tensor::{Shape, TensorData};
 use qlang_core::verify;
 
 use crate::ollama::{OllamaClient, ChatMessage};
@@ -572,6 +572,165 @@ pub fn execute(
                     ExecutionError::RuntimeError(format!("ollama_chat: {e}"))
                 })?;
                 node_outputs.insert((node_id, 0), TensorData::from_string(&response));
+            }
+
+            // === Ternary Ensemble Training Ops ===
+
+            Op::ClassMean { n_classes } => {
+                // Input 0: images [n_samples, image_dim] as f32
+                // Input 1: labels [n_samples] as u8 (stored as f32, cast to u8)
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 2 {
+                    return Err(ExecutionError::MissingInput(node_id, "ClassMean needs images + labels".into()));
+                }
+                let images = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "images".into()))?;
+                let labels_td = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "labels".into()))?;
+
+                let img_data = images.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("ClassMean: images must be f32".into()))?;
+                let lbl_data = labels_td.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("ClassMean: labels must be f32-encoded".into()))?;
+
+                let n_samples = lbl_data.len();
+                let image_dim = if n_samples > 0 { img_data.len() / n_samples } else { 0 };
+
+                // Compute per-class mean
+                let mut means = vec![0.0f32; *n_classes * image_dim];
+                let mut counts = vec![0u32; *n_classes];
+                for i in 0..n_samples {
+                    let c = lbl_data[i] as usize;
+                    if c < *n_classes {
+                        counts[c] += 1;
+                        for k in 0..image_dim {
+                            means[c * image_dim + k] += img_data[i * image_dim + k];
+                        }
+                    }
+                }
+                for c in 0..*n_classes {
+                    if counts[c] > 0 {
+                        for k in 0..image_dim {
+                            means[c * image_dim + k] /= counts[c] as f32;
+                        }
+                    }
+                }
+
+                let result = TensorData::from_f32(
+                    Shape::matrix(*n_classes, image_dim), &means,
+                );
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::Ternarize { threshold_ratio } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let data = input.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("Ternarize: input must be f32".into()))?;
+
+                let mean_abs: f32 = data.iter().map(|v| v.abs()).sum::<f32>() / data.len().max(1) as f32;
+                let threshold = mean_abs * threshold_ratio;
+
+                let ternary: Vec<f32> = data.iter().map(|&v| {
+                    if v > threshold { 1.0 } else if v < -threshold { -1.0 } else { 0.0 }
+                }).collect();
+
+                let result = TensorData::from_f32(input.shape.clone(), &ternary);
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::TernaryMatVec => {
+                let (weights, x) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let w_data = weights.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("TernaryMatVec: weights must be f32".into()))?;
+                let x_data = x.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("TernaryMatVec: input must be f32".into()))?;
+
+                // Infer dimensions from shape numel
+                let w_numel = weights.shape.numel().unwrap_or(w_data.len());
+                let x_numel = x.shape.numel().unwrap_or(x_data.len());
+                // Assume square-ish if we can't determine: use shape[1] from matrix
+                let in_dim = (x_numel as f64).sqrt() as usize; // approximate
+                let in_dim = if w_numel > 0 && x_numel > 0 {
+                    // Heuristic: find in_dim such that w_numel = out_dim * in_dim and x_numel = batch * in_dim
+                    // Try common values
+                    let mut best = 784usize;
+                    for candidate in [784, 794, 256, 128, 64, 512, 1024] {
+                        if w_numel % candidate == 0 && x_numel % candidate == 0 {
+                            best = candidate;
+                            break;
+                        }
+                    }
+                    best
+                } else { 784 };
+                let out_dim = w_data.len() / in_dim.max(1);
+                let batch = x_data.len() / in_dim.max(1);
+
+                let mut y = vec![0.0f32; batch * out_dim];
+                for b in 0..batch {
+                    for j in 0..out_dim {
+                        let mut sum = 0.0f32;
+                        for k in 0..in_dim {
+                            let w = w_data[j * in_dim + k];
+                            if w > 0.5 { sum += x_data[b * in_dim + k]; }
+                            else if w < -0.5 { sum -= x_data[b * in_dim + k]; }
+                        }
+                        y[b * out_dim + j] = sum;
+                    }
+                }
+
+                let result = TensorData::from_f32(Shape::matrix(batch, out_dim), &y);
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::ArgMax => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let data = input.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("ArgMax: input must be f32".into()))?;
+
+                // Infer dimensions: assume last dim is n_classes (typically 10)
+                let last_dim = 10usize; // For classification
+                let batch = data.len() / last_dim.max(1);
+
+                let indices: Vec<f32> = (0..batch).map(|b| {
+                    let off = b * last_dim;
+                    data[off..off + last_dim].iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(i, _)| i as f32)
+                        .unwrap_or(0.0)
+                }).collect();
+
+                let result = TensorData::from_f32(Shape::vector(batch), &indices);
+                node_outputs.insert((node_id, 0), result);
+            }
+
+            Op::EnsembleVote => {
+                let (scores, weights) = get_two_inputs(graph, node_id, &node_outputs)?;
+                let s_data = scores.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("EnsembleVote: scores must be f32".into()))?;
+                let w_data = weights.as_f32_slice().ok_or_else(||
+                    ExecutionError::RuntimeError("EnsembleVote: weights must be f32".into()))?;
+
+                let n_classes = w_data.len();
+                let batch = s_data.len() / n_classes.max(1);
+
+                let predictions: Vec<f32> = (0..batch).map(|b| {
+                    let off = b * n_classes;
+                    let mut best_c = 0usize;
+                    let mut best_score = f32::NEG_INFINITY;
+                    for c in 0..n_classes {
+                        let weighted = s_data[off + c] * w_data[c];
+                        if weighted > best_score { best_score = weighted; best_c = c; }
+                    }
+                    best_c as f32
+                }).collect();
+
+                let result = TensorData::from_f32(Shape::vector(batch), &predictions);
+                node_outputs.insert((node_id, 0), result);
             }
 
             other => {

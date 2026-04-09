@@ -1,0 +1,86 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - heading "QO" [level=1] [ref=e6]
+    - navigation [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e11]: Chat
+      - button "Ziele" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+        - generic [ref=e17]: Ziele
+      - button "Agenten" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+        - generic [ref=e24]: Agenten
+      - button "Bewusstsein" [ref=e25] [cursor=pointer]:
+        - img [ref=e26]
+        - generic [ref=e34]: Bewusstsein
+      - button "Provider" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e39]: Provider
+      - button "Evolution" [ref=e40] [cursor=pointer]:
+        - img [ref=e41]
+        - generic [ref=e53]: Evolution
+      - button "QLANG" [ref=e54] [cursor=pointer]:
+        - img [ref=e55]
+        - generic [ref=e59]: QLANG
+      - button "Messages" [active] [ref=e60] [cursor=pointer]:
+        - img [ref=e61]
+        - generic [ref=e64]: Messages
+      - button "Historie" [ref=e65] [cursor=pointer]:
+        - img [ref=e66]
+        - generic [ref=e69]: Historie
+    - generic [ref=e70]:
+      - button "Dark Mode aktivieren" [ref=e71] [cursor=pointer]:
+        - img [ref=e72]
+      - generic "Verbunden" [ref=e74]:
+        - generic [ref=e76]: Online
+      - generic [ref=e77]: v0.1.0
+  - generic [ref=e78]:
+    - generic [ref=e109]:
+      - generic [ref=e110]:
+        - generic [ref=e111]:
+          - generic [ref=e112]: "0"
+          - generic [ref=e113]: Nachrichten
+        - generic [ref=e114]:
+          - generic [ref=e115]: "0"
+          - generic [ref=e116]: Zugestellt
+        - generic [ref=e117]:
+          - generic [ref=e118]: "0"
+          - generic [ref=e119]: Fehlgeschlagen
+        - generic [ref=e120]:
+          - generic [ref=e121]: "0"
+          - generic [ref=e122]: Konversationen
+      - generic [ref=e123]:
+        - generic [ref=e124]:
+          - img [ref=e125]
+          - heading "Tensor-Austausch Proof" [level=3] [ref=e127]
+        - generic [ref=e128]:
+          - textbox "Text A (Researcher)" [ref=e129]: Rust ist eine Systemprogrammiersprache
+          - textbox "Text B (Developer)" [ref=e130]: Python ist eine Skriptsprache
+          - button "Tensor-Proof starten" [ref=e131] [cursor=pointer]
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - img [ref=e134]
+          - heading "Registrierte Agenten (6)" [level=3] [ref=e139]
+          - generic [ref=e140]:
+            - img [ref=e141]
+            - generic [ref=e147]: Live
+        - generic [ref=e148]:
+          - generic [ref=e149]: ceo
+          - generic [ref=e150]: guardian
+          - generic [ref=e151]: developer
+          - generic [ref=e152]: strategist
+          - generic [ref=e153]: artisan
+          - generic [ref=e154]: researcher
+      - generic [ref=e155]:
+        - generic [ref=e156]:
+          - img [ref=e157]
+          - heading "QLMS Nachrichtenlog" [level=3] [ref=e160]
+          - generic [ref=e161]: 0 Nachrichten
+        - generic [ref=e163]: Warte auf QLMS-Nachrichten... Erstelle ein Ziel im Ziele-Tab um Agent-Kommunikation zu sehen.
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - heading "Aktivität" [level=3] [ref=e103]
+        - button "Einklappen" [ref=e105] [cursor=pointer]:
+          - img [ref=e106]
+      - generic [ref=e108]: Warte auf Aktivität...

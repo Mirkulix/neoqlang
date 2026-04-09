@@ -654,7 +654,12 @@ fn op_to_onnx(op: &Op) -> Option<(String, HashMap<String, OnnxAttribute>)> {
         | Op::Scan { .. }
         | Op::SubGraph { .. }
         | Op::OllamaGenerate { .. }
-        | Op::OllamaChat { .. } => {
+        | Op::OllamaChat { .. }
+        | Op::ClassMean { .. }
+        | Op::Ternarize { .. }
+        | Op::TernaryMatVec
+        | Op::ArgMax
+        | Op::EnsembleVote => {
             return Some((format!("com.qlang.{op}"), op_to_qlang_attrs(op)));
         }
         // Input/Output are not emitted as ONNX nodes.

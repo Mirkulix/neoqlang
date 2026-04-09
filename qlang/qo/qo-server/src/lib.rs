@@ -275,6 +275,7 @@ pub async fn build_app(
         .route("/api/messages/stream", get(routes::messages::bus_stream))
         .route("/api/proof/tensor-exchange", post(routes::proof::tensor_exchange))
         .route("/api/training/qlang", post(routes::training::train_qlang))
+        .route("/api/training/monitor", get(routes::train_monitor::monitor))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

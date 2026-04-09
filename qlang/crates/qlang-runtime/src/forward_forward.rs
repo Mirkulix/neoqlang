@@ -71,21 +71,34 @@ impl FFLayer {
     }
 
     /// Forward pass using SHADOW weights (f32) for learning.
-    /// The ternary weights are only used at inference/export time.
-    /// Returns activations [batch, out_dim]
+    /// Parallelized across batch samples.
     pub fn forward(&self, input: &[f32], batch: usize) -> Vec<f32> {
-        let mut output = vec![0.0f32; batch * self.out_dim];
-        for b in 0..batch {
-            for j in 0..self.out_dim {
-                let mut sum = self.biases[j];
-                // Use shadow (f32) weights during training for gradient signal
-                let w_row = &self.shadow[j * self.in_dim..(j + 1) * self.in_dim];
-                let x_row = &input[b * self.in_dim..(b + 1) * self.in_dim];
-                for k in 0..self.in_dim {
-                    sum += x_row[k] * w_row[k];
+        let out_dim = self.out_dim;
+        let in_dim = self.in_dim;
+        let shadow = &self.shadow;
+        let biases = &self.biases;
+
+        // Parallel across batch samples
+        let chunks: Vec<Vec<f32>> = (0..batch)
+            .into_par_iter()
+            .map(|b| {
+                let x_row = &input[b * in_dim..(b + 1) * in_dim];
+                let mut row_out = vec![0.0f32; out_dim];
+                for j in 0..out_dim {
+                    let mut sum = biases[j];
+                    let w_row = &shadow[j * in_dim..(j + 1) * in_dim];
+                    for k in 0..in_dim {
+                        sum += x_row[k] * w_row[k];
+                    }
+                    row_out[j] = sum.max(0.0);
                 }
-                output[b * self.out_dim + j] = sum.max(0.0); // ReLU
-            }
+                row_out
+            })
+            .collect();
+
+        let mut output = vec![0.0f32; batch * out_dim];
+        for (b, chunk) in chunks.into_iter().enumerate() {
+            output[b * out_dim..(b + 1) * out_dim].copy_from_slice(&chunk);
         }
         output
     }
@@ -133,53 +146,62 @@ impl FFLayer {
     ///
     /// Returns (pos_goodness, neg_goodness)
     pub fn ff_step(&mut self, pos_input: &[f32], neg_input: &[f32], batch: usize) -> (f32, f32) {
-        // Positive forward (unnormalized for goodness computation)
         let pos_act = self.forward(pos_input, batch);
         let pos_goodness = Self::goodness(&pos_act, batch, self.out_dim);
 
-        // Negative forward
         let neg_act = self.forward(neg_input, batch);
         let neg_goodness = Self::goodness(&neg_act, batch, self.out_dim);
 
-        // Per-neuron local learning signal:
-        // p = σ(goodness - threshold) for positive, want p → 1
-        // q = σ(goodness - threshold) for negative, want q → 0
-        // Gradient for each neuron j:
-        //   dL/d_act[j] = (p - 1) * 2*act[j] for positive
-        //   dL/d_act[j] = (q - 0) * 2*act[j] for negative
-        for b in 0..batch {
-            // Positive: compute gradient of log(σ(g - θ)) w.r.t. pre-activations
-            let pos_g: f32 = (0..self.out_dim)
-                .map(|j| pos_act[b * self.out_dim + j].powi(2))
-                .sum();
-            let pos_p = 1.0 / (1.0 + (-(pos_g - self.threshold)).exp());
+        let out_dim = self.out_dim;
+        let in_dim = self.in_dim;
+        let threshold = self.threshold;
+        let lr = self.lr;
+        let inv_batch = 1.0 / batch as f32;
 
-            // Negative
-            let neg_g: f32 = (0..self.out_dim)
-                .map(|j| neg_act[b * self.out_dim + j].powi(2))
-                .sum();
-            let neg_p = 1.0 / (1.0 + (-(neg_g - self.threshold)).exp());
+        // Pre-compute per-sample goodness and sigmoid
+        let sample_signals: Vec<(f32, f32)> = (0..batch)
+            .map(|b| {
+                let pos_g: f32 = (0..out_dim).map(|j| pos_act[b * out_dim + j].powi(2)).sum();
+                let neg_g: f32 = (0..out_dim).map(|j| neg_act[b * out_dim + j].powi(2)).sum();
+                let pos_p = 1.0 / (1.0 + (-(pos_g - threshold)).exp());
+                let neg_p = 1.0 / (1.0 + (-(neg_g - threshold)).exp());
+                (pos_p, neg_p)
+            })
+            .collect();
 
-            for j in 0..self.out_dim {
-                // Local gradient for neuron j
-                let pos_a = pos_act[b * self.out_dim + j];
-                let neg_a = neg_act[b * self.out_dim + j];
+        // Parallel gradient computation per output neuron j
+        // Each j writes to shadow[j*in_dim..(j+1)*in_dim] — no overlap
+        let shadow_chunks: Vec<(Vec<f32>, f32)> = (0..out_dim)
+            .into_par_iter()
+            .map(|j| {
+                let mut w_delta = vec![0.0f32; in_dim];
+                let mut b_delta = 0.0f32;
 
-                // Want: increase pos goodness, decrease neg goodness
-                let d_pos = (1.0 - pos_p) * 2.0 * pos_a; // push up
-                let d_neg = neg_p * 2.0 * neg_a;           // push down
+                for b in 0..batch {
+                    let (pos_p, neg_p) = sample_signals[b];
+                    let pos_a = pos_act[b * out_dim + j];
+                    let neg_a = neg_act[b * out_dim + j];
+                    let d_pos = (1.0 - pos_p) * 2.0 * pos_a;
+                    let d_neg = neg_p * 2.0 * neg_a;
 
-                for k in 0..self.in_dim {
-                    let pos_x = pos_input[b * self.in_dim + k];
-                    let neg_x = neg_input[b * self.in_dim + k];
-                    // Update shadow weights: local goodness-modulated Hebbian
-                    self.shadow[j * self.in_dim + k] +=
-                        self.lr * (d_pos * pos_x - d_neg * neg_x) / batch as f32;
+                    for k in 0..in_dim {
+                        let pos_x = pos_input[b * in_dim + k];
+                        let neg_x = neg_input[b * in_dim + k];
+                        w_delta[k] += lr * (d_pos * pos_x - d_neg * neg_x) * inv_batch;
+                    }
+                    b_delta += lr * (d_pos - d_neg) * inv_batch;
                 }
 
-                // Bias update
-                self.biases[j] += self.lr * (d_pos - d_neg) / batch as f32;
+                (w_delta, b_delta)
+            })
+            .collect();
+
+        // Apply deltas
+        for (j, (w_delta, b_delta)) in shadow_chunks.into_iter().enumerate() {
+            for k in 0..in_dim {
+                self.shadow[j * in_dim + k] += w_delta[k];
             }
+            self.biases[j] += b_delta;
         }
 
         (pos_goodness, neg_goodness)

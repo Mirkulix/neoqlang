@@ -10,5 +10,6 @@ pub mod memory;
 pub mod messages;
 pub mod proof;
 pub mod providers;
+pub mod train_monitor;
 pub mod training;
 pub mod simulation;

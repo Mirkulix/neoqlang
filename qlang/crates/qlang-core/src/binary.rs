@@ -99,6 +99,11 @@ const OP_SCAN: u8 = 40;
 const OP_SUB_GRAPH: u8 = 41;
 const OP_EXP: u8 = 42;
 const OP_LOG: u8 = 43;
+const OP_CLASS_MEAN: u8 = 44;
+const OP_TERNARIZE: u8 = 45;
+const OP_TERNARY_MATVEC: u8 = 46;
+const OP_ARGMAX: u8 = 47;
+const OP_ENSEMBLE_VOTE: u8 = 48;
 
 // Dtype tags (reuse the same encoding from tensor.rs wire format)
 const DTYPE_F16: u8 = 0;
@@ -389,6 +394,17 @@ fn write_op(buf: &mut Vec<u8>, op: &Op) {
         }
         Op::Exp => buf.push(OP_EXP),
         Op::Log => buf.push(OP_LOG),
+        Op::ClassMean { n_classes } => {
+            buf.push(OP_CLASS_MEAN);
+            buf.extend_from_slice(&(*n_classes as u32).to_le_bytes());
+        }
+        Op::Ternarize { threshold_ratio } => {
+            buf.push(OP_TERNARIZE);
+            buf.extend_from_slice(&threshold_ratio.to_le_bytes());
+        }
+        Op::TernaryMatVec => buf.push(OP_TERNARY_MATVEC),
+        Op::ArgMax => buf.push(OP_ARGMAX),
+        Op::EnsembleVote => buf.push(OP_ENSEMBLE_VOTE),
     }
 }
 
@@ -501,6 +517,11 @@ fn read_u64(data: &[u8], pos: &mut usize) -> Result<u64, BinaryError> {
     ]);
     *pos += 8;
     Ok(v)
+}
+
+fn read_f32(data: &[u8], pos: &mut usize) -> Result<f32, BinaryError> {
+    let bits = read_u32(data, pos)?;
+    Ok(f32::from_le_bytes(bits.to_le_bytes()))
 }
 
 fn read_f64(data: &[u8], pos: &mut usize) -> Result<f64, BinaryError> {
@@ -632,6 +653,17 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
         }
         OP_EXP => Ok(Op::Exp),
         OP_LOG => Ok(Op::Log),
+        OP_CLASS_MEAN => {
+            let n_classes = read_u32(data, pos)? as usize;
+            Ok(Op::ClassMean { n_classes })
+        }
+        OP_TERNARIZE => {
+            let threshold_ratio = read_f32(data, pos)?;
+            Ok(Op::Ternarize { threshold_ratio })
+        }
+        OP_TERNARY_MATVEC => Ok(Op::TernaryMatVec),
+        OP_ARGMAX => Ok(Op::ArgMax),
+        OP_ENSEMBLE_VOTE => Ok(Op::EnsembleVote),
         _ => Err(BinaryError::InvalidOpTag(tag)),
     }
 }

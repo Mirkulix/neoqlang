@@ -1,0 +1,154 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - heading "QO" [level=1] [ref=e6]
+    - navigation [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e11]: Chat
+      - button "Ziele" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+        - generic [ref=e17]: Ziele
+      - button "Agenten" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+        - generic [ref=e24]: Agenten
+      - button "Bewusstsein" [ref=e25] [cursor=pointer]:
+        - img [ref=e26]
+        - generic [ref=e34]: Bewusstsein
+      - button "Provider" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e39]: Provider
+      - button "Evolution" [ref=e40] [cursor=pointer]:
+        - img [ref=e41]
+        - generic [ref=e53]: Evolution
+      - button "QLANG" [ref=e54] [cursor=pointer]:
+        - img [ref=e55]
+        - generic [ref=e59]: QLANG
+      - button "Messages" [ref=e60] [cursor=pointer]:
+        - img [ref=e61]
+        - generic [ref=e64]: Messages
+      - button "Historie" [ref=e65] [cursor=pointer]:
+        - img [ref=e66]
+        - generic [ref=e69]: Historie
+    - generic [ref=e70]:
+      - button "Dark Mode aktivieren" [ref=e71] [cursor=pointer]:
+        - img [ref=e72]
+      - generic "Verbunden" [ref=e74]:
+        - generic [ref=e76]: Online
+      - generic [ref=e77]: v0.1.0
+  - generic [ref=e78]:
+    - generic [ref=e109]:
+      - generic [ref=e110]:
+        - generic [ref=e111]:
+          - generic [ref=e112]: "2"
+          - generic [ref=e113]: Nachrichten
+        - generic [ref=e114]:
+          - generic [ref=e115]: "2"
+          - generic [ref=e116]: Zugestellt
+        - generic [ref=e117]:
+          - generic [ref=e118]: "0"
+          - generic [ref=e119]: Fehlgeschlagen
+        - generic [ref=e120]:
+          - generic [ref=e121]: "1"
+          - generic [ref=e122]: Konversationen
+      - generic [ref=e123]:
+        - generic [ref=e124]:
+          - img [ref=e125]
+          - heading "Tensor-Austausch Proof" [level=3] [ref=e127]
+        - generic [ref=e128]:
+          - textbox "Text A (Researcher)" [ref=e129]: Rust ist eine Systemprogrammiersprache
+          - textbox "Text B (Developer)" [ref=e130]: Python ist eine Skriptsprache
+          - button "Tensor-Proof starten" [ref=e131] [cursor=pointer]
+        - generic [ref=e164]:
+          - generic [ref=e165]:
+            - generic [ref=e166]: Erfolgreich
+            - generic [ref=e167]:
+              - text: "Similarity:"
+              - strong [ref=e168]: "0.3820"
+            - generic [ref=e169]: 188.5ms
+            - generic [ref=e170]: 1821 Bytes
+            - generic [ref=e171]: 2 QLMS Messages
+            - generic [ref=e172]: 0 LLM Calls
+          - generic [ref=e173]:
+            - generic [ref=e174]:
+              - generic [ref=e175]: "1."
+              - generic [ref=e176]: researcher
+              - generic [ref=e177]: embed
+              - generic [ref=e178]: 136.5ms
+              - generic [ref=e179]: Embedded 'Rust ist eine Systemprogrammiersprache' → 384-dim vector
+            - generic [ref=e180]:
+              - generic [ref=e181]: "2."
+              - generic [ref=e182]: researcher
+              - generic [ref=e183]: send_via_bus
+              - generic [ref=e184]: 20us
+              - generic [ref=e185]: "GraphMessage(researcher→developer): 146 graph bytes + 1536 tensor bytes = 1682 total, delivery=Delivered"
+            - generic [ref=e186]:
+              - generic [ref=e187]: "3."
+              - generic [ref=e188]: developer
+              - generic [ref=e189]: embed
+              - generic [ref=e190]: 51.9ms
+              - generic [ref=e191]: Embedded 'Python ist eine Skriptsprache' → 384-dim vector
+            - generic [ref=e192]:
+              - generic [ref=e193]: "4."
+              - generic [ref=e194]: developer
+              - generic [ref=e195]: cosine_similarity
+              - generic [ref=e196]: 0us
+              - generic [ref=e197]: cosine_similarity(embedding_a, embedding_b) = 0.3820 (deterministic, zero LLM calls)
+            - generic [ref=e198]:
+              - generic [ref=e199]: "5."
+              - generic [ref=e200]: developer
+              - generic [ref=e201]: send_result_via_bus
+              - generic [ref=e202]: 15us
+              - generic [ref=e203]: "GraphMessage(developer→researcher): similarity=0.3820, delivery=Delivered"
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - img [ref=e134]
+          - heading "Registrierte Agenten (6)" [level=3] [ref=e139]
+          - generic [ref=e140]:
+            - img [ref=e141]
+            - generic [ref=e147]: Live
+        - generic [ref=e148]:
+          - generic [ref=e149]: ceo
+          - generic [ref=e150]: guardian
+          - generic [ref=e151]: developer
+          - generic [ref=e152]: strategist
+          - generic [ref=e153]: artisan
+          - generic [ref=e154]: researcher
+      - generic [ref=e204]:
+        - generic [ref=e205]:
+          - img [ref=e206]
+          - heading "Aktive Konversationen" [level=3] [ref=e208]
+        - generic [ref=e209]:
+          - generic [ref=e210]: researcher
+          - img [ref=e211]
+          - generic [ref=e213]: developer
+      - generic [ref=e155]:
+        - generic [ref=e156]:
+          - img [ref=e157]
+          - heading "QLMS Nachrichtenlog" [level=3] [ref=e160]
+          - generic [ref=e161]: 2 Nachrichten
+        - generic [ref=e162]:
+          - generic [ref=e214]:
+            - generic [ref=e215]: 13:39:33
+            - generic [ref=e216]: researcher
+            - img [ref=e217]
+            - generic [ref=e219]: developer
+            - generic [ref=e220]: Execute
+            - generic [ref=e221]: researcher_embed
+          - generic [ref=e222]:
+            - generic [ref=e223]: 13:39:33
+            - generic [ref=e224]: developer
+            - img [ref=e225]
+            - generic [ref=e227]: researcher
+            - generic [ref=e228]: Result
+            - generic [ref=e229]: developer_similarity
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - heading "Aktivität" [level=3] [ref=e103]
+        - generic [ref=e104]:
+          - generic [ref=e230]: "1"
+          - button "Einklappen" [ref=e105] [cursor=pointer]:
+            - img [ref=e106]
+      - generic [ref=e231]:
+        - generic [ref=e232]: 13:39:33
+        - generic [ref=e234]: "[QLMS]"
+        - generic [ref=e235]: "PROOF: Tensor-Austausch! researcher→developer: 1821B, similarity=0.3820, 188533us, 0 LLM calls"

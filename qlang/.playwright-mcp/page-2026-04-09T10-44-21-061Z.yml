@@ -1,0 +1,66 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - heading "QO" [level=1] [ref=e6]
+    - navigation [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+        - generic [ref=e11]: Chat
+      - button "Ziele" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+        - generic [ref=e17]: Ziele
+      - button "Agenten" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+        - generic [ref=e24]: Agenten
+      - button "Bewusstsein" [ref=e25] [cursor=pointer]:
+        - img [ref=e26]
+        - generic [ref=e34]: Bewusstsein
+      - button "Provider" [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e39]: Provider
+      - button "Evolution" [ref=e40] [cursor=pointer]:
+        - img [ref=e41]
+        - generic [ref=e53]: Evolution
+      - button "QLANG" [ref=e54] [cursor=pointer]:
+        - img [ref=e55]
+        - generic [ref=e59]: QLANG
+      - button "Messages" [ref=e60] [cursor=pointer]:
+        - img [ref=e61]
+        - generic [ref=e64]: Messages
+      - button "Historie" [ref=e65] [cursor=pointer]:
+        - img [ref=e66]
+        - generic [ref=e69]: Historie
+    - generic [ref=e70]:
+      - button "Dark Mode aktivieren" [ref=e71] [cursor=pointer]:
+        - img [ref=e72]
+      - generic "Verbunden" [ref=e74]:
+        - generic [ref=e76]: Online
+      - generic [ref=e77]: v0.1.0
+  - generic [ref=e78]:
+    - generic [ref=e109]:
+      - generic [ref=e110]:
+        - button "Canvas" [ref=e111] [cursor=pointer]:
+          - img [ref=e112]
+          - text: Canvas
+        - button "Liste" [ref=e117] [cursor=pointer]:
+          - img [ref=e118]
+          - text: Liste
+      - generic [ref=e120]:
+        - generic [ref=e121]:
+          - generic [ref=e122]:
+            - text: "Messages:"
+            - strong [ref=e123]: "2"
+          - generic [ref=e129]: developer → researcher [Result]
+          - button "Tensor-Proof senden" [active] [ref=e124] [cursor=pointer]
+          - button "Reset Layout" [ref=e125] [cursor=pointer]
+        - generic [ref=e128]: Agenten mit der Maus verschieben. Blaue Linien = Execute, Gruene = Result. Punkte zeigen Datenfluss.
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - heading "Aktivität" [level=3] [ref=e103]
+        - generic [ref=e104]:
+          - generic [ref=e130]: "1"
+          - button "Einklappen" [ref=e105] [cursor=pointer]:
+            - img [ref=e106]
+      - generic [ref=e131]:
+        - generic [ref=e132]: 13:44:19
+        - generic [ref=e134]: "[QLMS]"
+        - generic [ref=e135]: "PROOF: Tensor-Austausch! researcher→developer: 1821B, similarity=0.3820, 201743us, 0 LLM calls"

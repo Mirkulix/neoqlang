@@ -87,6 +87,23 @@ pub enum Op {
     /// Chat completion via local Ollama LLM
     OllamaChat { model: String },
 
+    // === Ternary Ensemble Training (native QLANG training ops) ===
+    /// Compute per-class mean vectors from labeled data.
+    /// Input: (images[n,d], labels[n]) → Output: class_means[k,d]
+    ClassMean { n_classes: usize },
+    /// Ternarize a continuous vector: values above threshold → +1, below → -1, else → 0.
+    /// Input: continuous[d] → Output: ternary[d] ∈ {-1, 0, +1}
+    Ternarize { threshold_ratio: f32 },
+    /// Ternary matrix-vector product using only add/sub/skip.
+    /// Input: (ternary_weights[out,in], x[batch,in]) → Output: y[batch,out]
+    TernaryMatVec,
+    /// ArgMax along last axis.
+    /// Input: scores[batch, k] → Output: indices[batch]
+    ArgMax,
+    /// Ensemble voting: combine K classifier scores via weighted majority.
+    /// Input: (scores[batch,k], weights[k]) → Output: predictions[batch]
+    EnsembleVote,
+
     // === Control Flow ===
     /// Conditional: evaluates BOTH branches (quantum-style), selects based on predicate
     Cond,
@@ -121,10 +138,12 @@ impl Op {
             | Op::ReduceSum { .. } | Op::ReduceMean { .. } | Op::ReduceMax { .. }
             | Op::Project { .. } | Op::LayerNorm { .. } | Op::Gelu
             | Op::Dropout { .. } | Op::Embedding { .. }
-            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => 1,
+            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. }
+            | Op::Ternarize { .. } | Op::ArgMax => 1,
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::MatMul
             | Op::Concat { .. } | Op::Entangle | Op::FisherMetric
-            | Op::Residual => 2,
+            | Op::Residual | Op::TernaryMatVec | Op::EnsembleVote
+            | Op::ClassMean { .. } => 2,
             Op::Attention { .. } => 3, // Q, K, V
             Op::Cond => 3, // predicate, branch_a, branch_b
             Op::Evolve { .. } => 3, // ρ, hamiltonian, gradient
@@ -213,6 +232,11 @@ impl fmt::Display for Op {
             Op::Dropout { rate } => write!(f, "dropout(rate={rate})"),
             Op::OllamaGenerate { model } => write!(f, "ollama_generate({model})"),
             Op::OllamaChat { model } => write!(f, "ollama_chat({model})"),
+            Op::ClassMean { n_classes } => write!(f, "class_mean(k={n_classes})"),
+            Op::Ternarize { threshold_ratio } => write!(f, "ternarize(t={threshold_ratio})"),
+            Op::TernaryMatVec => write!(f, "ternary_matvec"),
+            Op::ArgMax => write!(f, "argmax"),
+            Op::EnsembleVote => write!(f, "ensemble_vote"),
             Op::Cond => write!(f, "cond"),
             Op::Scan { n_iterations } => write!(f, "scan(n={n_iterations})"),
             Op::SubGraph { graph_id } => write!(f, "subgraph({graph_id})"),
