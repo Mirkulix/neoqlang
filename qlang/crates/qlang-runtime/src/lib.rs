@@ -37,6 +37,7 @@ pub mod forward_forward;
 pub mod graph_ff_train;
 pub mod mamba;
 pub mod noprop;
+pub mod qlang_lm;
 pub mod quantum_flow;
 pub mod ternary_net;
 pub mod ternary_ops;
