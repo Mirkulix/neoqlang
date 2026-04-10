@@ -365,18 +365,57 @@ impl TrainableLM {
         loss
     }
 
-    /// Generate text.
+    /// Generate text with temperature sampling.
+    /// temperature=0.0 → greedy, temperature=1.0 → full distribution
     pub fn generate(&self, prompt: &str, n_tokens: usize) -> String {
+        self.generate_with_temp(prompt, n_tokens, 0.8)
+    }
+
+    pub fn generate_with_temp(&self, prompt: &str, n_tokens: usize, temperature: f32) -> String {
         let mut tokens = self.tokenizer.encode(prompt);
         if tokens.is_empty() { tokens.push(2); }
 
+        let mut rng = 42u64;
+
         for _ in 0..n_tokens {
             let (logits, _) = self.forward(&tokens);
-            let last = &logits[(tokens.len() - 1) * self.vocab_size..tokens.len() * self.vocab_size];
-            let next = last.iter().enumerate()
-                .filter(|(idx, _)| *idx >= 2) // skip unk/pad
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(i, _)| i).unwrap_or(2);
+            let off = (tokens.len() - 1) * self.vocab_size;
+            let last = &logits[off..off + self.vocab_size];
+
+            // Apply temperature
+            let temp = temperature.max(0.01);
+            let mut scaled: Vec<f32> = last.iter().map(|&l| l / temp).collect();
+
+            // Zero out <unk> and <pad>
+            scaled[0] = f32::NEG_INFINITY;
+            scaled[1] = f32::NEG_INFINITY;
+
+            // Top-k filtering: keep only top 40
+            let mut indices: Vec<usize> = (0..self.vocab_size).collect();
+            indices.sort_by(|&a, &b| scaled[b].partial_cmp(&scaled[a]).unwrap());
+            for &idx in &indices[40..] {
+                scaled[idx] = f32::NEG_INFINITY;
+            }
+
+            // Softmax
+            let max_s = scaled.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let mut probs: Vec<f32> = scaled.iter().map(|&s| (s - max_s).exp()).collect();
+            let sum: f32 = probs.iter().sum();
+            if sum > 0.0 { for p in &mut probs { *p /= sum; } }
+
+            // Sample from distribution
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let r = (rng >> 33) as f32 / u32::MAX as f32;
+            let mut cumsum = 0.0f32;
+            let mut next = 2usize;
+            for (i, &p) in probs.iter().enumerate() {
+                cumsum += p;
+                if cumsum > r && i >= 2 {
+                    next = i;
+                    break;
+                }
+            }
+
             tokens.push(next);
         }
         self.tokenizer.decode(&tokens)

@@ -44,8 +44,17 @@ fn lm_bptt_big() {
     println!("FINAL PPL: {:.1} (init: {:.1}, {:.1}x)", final_ppl, init_ppl, init_ppl / final_ppl);
     println!("{}", "=".repeat(60));
 
+    println!("\n--- Temperature Sampling ---");
     let prompts = ["the", "in the", "he was", "it is", "they were", "she had"];
     for p in &prompts {
-        println!("  \"{} ...\" → \"{}\"", p, lm.generate(p, 15));
+        println!("  \"{}\" → \"{}\"", p, lm.generate_with_temp(p, 15, 0.8));
+    }
+    println!("\n--- Low Temperature (0.3) ---");
+    for p in &prompts[..3] {
+        println!("  \"{}\" → \"{}\"", p, lm.generate_with_temp(p, 15, 0.3));
+    }
+    println!("\n--- High Temperature (1.2) ---");
+    for p in &prompts[..3] {
+        println!("  \"{}\" → \"{}\"", p, lm.generate_with_temp(p, 15, 1.2));
     }
 }
