@@ -256,7 +256,8 @@ impl Organism {
         } else if lower.contains("classify") || lower.contains("predict") {
             "classify"
         } else {
-            "unknown"
+            // Default: try classifier if available, otherwise unknown
+            "classify_or_respond"
         };
 
         reasoning.push(format!("Routed to category: {}", category));
@@ -283,22 +284,48 @@ impl Organism {
                         if let Some((name, sim)) = hd_memory.query(input_vec) {
                             if sim > 0.2 {
                                 spec.invocations += 1;
-                                reasoning.push(format!("Memory recalled: {} (sim={:.2})", name, sim));
-                                return (spec.name.clone(), format!("I remember: {}", name));
+                                // Clean: only show the original fact, not chained responses
+                                let clean = name.split('→').next().unwrap_or(name).trim();
+                                reasoning.push(format!("Memory recalled: {} (sim={:.2})", clean, sim));
+                                return (spec.name.clone(), format!("I remember: {}", clean));
                             }
                         }
                         return (spec.name.clone(), "No relevant memories found.".into());
                     }
                 }
             }
-            "classify" => {
+            "classify" | "classify_or_respond" => {
+                // Try each classifier
                 for spec in &mut self.specialists {
                     if let SpecialistRole::Classifier { brain, class_names } = &spec.role {
-                        // Use input HD vector as features (simplified)
                         let features: Vec<f32> = input_vec.data.iter().map(|&v| v as f32).collect();
+                        // Pad or truncate to match expected dim
+                        let needed = brain.image_dim;
+                        let mut feat = vec![0.0f32; needed];
+                        for i in 0..needed.min(features.len()) { feat[i] = features[i]; }
+                        let preds = brain.predict(&feat, 1);
+                        let class = preds[0] as usize;
+                        let class_name = class_names.get(class).map(|s| s.as_str()).unwrap_or("?");
                         spec.invocations += 1;
-                        reasoning.push(format!("Classifier invoked with {}-dim features", features.len()));
-                        return (spec.name.clone(), "Classification requires numeric features.".into());
+                        reasoning.push(format!("Classified as: {} (class {})", class_name, class));
+                        let response = format!("I think this is about: {}. {}", class_name,
+                            match class_name {
+                                "World" => "This seems to be a world news topic.",
+                                "Sports" => "This appears to be sports-related.",
+                                "Business" => "This looks like a business/finance topic.",
+                                "Tech" => "This seems to be about technology.",
+                                _ => "I classified this input.",
+                            });
+                        return (spec.name.clone(), response);
+                    }
+                }
+                // No classifier available, use responder
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Responder { templates } = &spec.role {
+                        let resps = templates.get("unknown").unwrap();
+                        let idx = spec.invocations as usize % resps.len();
+                        spec.invocations += 1;
+                        return (spec.name.clone(), resps[idx].clone());
                     }
                 }
             }
