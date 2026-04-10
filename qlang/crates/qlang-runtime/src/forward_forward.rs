@@ -28,13 +28,15 @@ fn ternarize(w: f32, threshold: f32) -> f32 {
 ///
 /// Uses f32 "shadow weights" that accumulate the goodness gradient,
 /// then derives ternary weights via sign+threshold (like Straight-Through Estimator).
-/// Forward pass uses ternary weights. Learning updates shadow weights.
+/// Forward pass uses shadow weights. Ternary weights for inference with learned alpha.
 #[derive(Debug, Clone)]
 pub struct FFLayer {
-    /// Ternary weights [out_dim, in_dim] used in forward pass
+    /// Ternary weights [out_dim, in_dim] used in inference {-1, 0, +1}
     pub weights: Vec<f32>,
     /// Shadow weights (f32) that accumulate goodness gradients
-    shadow: Vec<f32>,
+    pub shadow: Vec<f32>,
+    /// Learned scale factor: ternary inference uses alpha * weights
+    pub alpha: f32,
     /// Biases [out_dim]
     pub biases: Vec<f32>,
     /// Input dimension
@@ -62,6 +64,7 @@ impl FFLayer {
         Self {
             weights,
             shadow,
+            alpha: scale,
             biases,
             in_dim,
             out_dim,
@@ -103,12 +106,39 @@ impl FFLayer {
         output
     }
 
-    /// Forward pass using TERNARY weights via zero-multiply arithmetic.
+    /// Forward pass using TERNARY weights with learned alpha scaling.
+    /// Uses alpha * ternary_weights for better approximation of shadow weights.
     pub fn forward_ternary(&self, input: &[f32], batch: usize) -> Vec<f32> {
-        crate::ternary_ops::ternary_forward_relu(
-            input, &self.weights, &self.biases,
-            batch, self.out_dim, self.in_dim,
-        )
+        let out_dim = self.out_dim;
+        let in_dim = self.in_dim;
+        let alpha = self.alpha;
+        let weights = &self.weights;
+        let biases = &self.biases;
+
+        let chunks: Vec<Vec<f32>> = (0..batch)
+            .into_par_iter()
+            .map(|b| {
+                let x = &input[b * in_dim..(b + 1) * in_dim];
+                let mut out = vec![0.0f32; out_dim];
+                for j in 0..out_dim {
+                    let mut sum = biases[j];
+                    let w = &weights[j * in_dim..(j + 1) * in_dim];
+                    for k in 0..in_dim {
+                        // alpha-scaled ternary: add/sub with scale
+                        if w[k] > 0.5 { sum += alpha * x[k]; }
+                        else if w[k] < -0.5 { sum -= alpha * x[k]; }
+                    }
+                    out[j] = sum.max(0.0);
+                }
+                out
+            })
+            .collect();
+
+        let mut output = vec![0.0f32; batch * out_dim];
+        for (b, chunk) in chunks.into_iter().enumerate() {
+            output[b * out_dim..(b + 1) * out_dim].copy_from_slice(&chunk);
+        }
+        output
     }
 
     /// Normalize activations to unit length per sample (as in Hinton's paper).
@@ -207,8 +237,10 @@ impl FFLayer {
         (pos_goodness, neg_goodness)
     }
 
-    /// Derive ternary weights from shadow weights using adaptive threshold.
-    /// Returns number of weights that changed.
+    /// Derive ternary weights from shadow weights using adaptive threshold
+    /// and compute optimal scale alpha via least-squares:
+    ///   alpha = dot(shadow, ternary) / dot(ternary, ternary)
+    /// This minimizes ||shadow - alpha * ternary||².
     pub fn sync_ternary(&mut self) -> usize {
         let mean_abs: f32 = self.shadow.iter().map(|w| w.abs()).sum::<f32>()
             / self.shadow.len() as f32;
@@ -222,6 +254,19 @@ impl FFLayer {
                 changed += 1;
             }
         }
+
+        // Optimal alpha: minimizes ||shadow - alpha * ternary||²
+        // Closed form: alpha = dot(shadow, ternary) / dot(ternary, ternary)
+        let mut dot_st = 0.0f32;
+        let mut dot_tt = 0.0f32;
+        for i in 0..self.shadow.len() {
+            dot_st += self.shadow[i] * self.weights[i];
+            dot_tt += self.weights[i] * self.weights[i];
+        }
+        if dot_tt > 0.0 {
+            self.alpha = (dot_st / dot_tt).max(0.001);
+        }
+
         changed
     }
 

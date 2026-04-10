@@ -32,6 +32,7 @@ pub mod forward_forward;
 pub mod quantum_flow;
 pub mod ternary_net;
 pub mod ternary_ops;
+pub mod ternary_brain;
 pub mod ternary_ensemble;
 pub mod ternary_matrix;
 pub mod ternary_vote;

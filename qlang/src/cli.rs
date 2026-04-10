@@ -176,13 +176,15 @@ impl TernaryModel {
 // CLI Commands
 // ============================================================
 
-fn cmd_train(data_path: &str, epochs: usize, output: &str, hidden_layers: &[usize]) {
-    println!("QLANG Train — Forward-Forward Ternary\n");
+fn cmd_train(data_path: &str, epochs: usize, output: &str, _hidden_layers: &[usize]) {
+    use qlang_runtime::ternary_brain::TernaryBrain;
+
+    println!("QLANG Train — Ternary Brain (Statistical Init + Competitive Hebbian)\n");
 
     // Load data
     let data = match MnistData::load_from_dir(data_path) {
         Ok(d) => {
-            println!("Loaded MNIST from '{}'", data_path);
+            println!("Loaded REAL MNIST from '{}'", data_path);
             d
         }
         Err(_) => {
@@ -198,66 +200,79 @@ fn cmd_train(data_path: &str, epochs: usize, output: &str, hidden_layers: &[usiz
     let test_images = &data.test_images[..test_limit * 784];
     let test_labels = &data.test_labels[..test_limit];
 
-    println!("Train: {}, Test: {}, Epochs: {}\n", train_limit, test_limit, epochs);
+    println!("Train: {}, Test: {}", train_limit, test_limit);
 
-    // Parse hidden layers from --hidden flag or use default
-    let layer_sizes: Vec<usize> = {
-        let mut sizes = vec![794]; // 784 image + 10 label
-        sizes.extend_from_slice(&hidden_layers);
-        sizes
-    };
-    println!("Architecture: {:?}\n", layer_sizes);
-    let mut net = FFNetwork::new(&layer_sizes, 10);
+    // Phase 1: Statistical Initialization (instant)
+    println!("\n=== Phase 1: Statistical Init ===");
     let total_start = Instant::now();
+    let mut brain = TernaryBrain::init(train_images, train_labels, 784, train_limit, 10, 20);
+    let phase1_time = total_start.elapsed();
+    let phase1_acc = brain.accuracy(test_images, test_labels, test_limit);
+    println!("  Accuracy: {:.1}% (in {:?})", phase1_acc * 100.0, phase1_time);
 
-    for epoch in 0..epochs {
-        let (pg, ng) = net.train_epoch(train_images, train_labels, 784, train_limit, 100);
-        if epoch % 3 == 0 || epoch == epochs - 1 {
-            let f32_acc = net.accuracy(test_images, test_labels, 784, test_limit);
-            let tern_acc = net.accuracy_ternary(test_images, test_labels, 784, test_limit);
-            println!("  Epoch {:>2}/{}: f32={:.1}%  ternary={:.1}%  (pg={:.2} ng={:.2})",
-                epoch + 1, epochs, f32_acc * 100.0, tern_acc * 100.0, pg, ng);
+    // Phase 2: Competitive Hebbian Refinement
+    println!("\n=== Phase 2: Competitive Hebbian ({} rounds) ===", epochs);
+    for round in 0..epochs {
+        brain.refine(train_images, train_labels, train_limit, 784);
+        if round % 3 == 0 || round == epochs - 1 {
+            let acc = brain.accuracy(test_images, test_labels, test_limit);
+            println!("  Round {:>2}/{}: {:.1}% ({:.1?})",
+                round + 1, epochs, acc * 100.0, total_start.elapsed());
         }
     }
 
     let train_time = total_start.elapsed();
-    let f32_acc = net.accuracy(test_images, test_labels, 784, test_limit);
-    let tern_acc = net.accuracy_ternary(test_images, test_labels, 784, test_limit);
+    let final_acc = brain.accuracy(test_images, test_labels, test_limit);
+    let total_weights = brain.total_weights();
+    let ternary_verified = brain.verify_ternary();
 
-    let total_params: usize = net.layers.iter().map(|l| l.weights.len() + l.biases.len()).sum();
-    let f32_size = total_params * 4;
-    let tern_size: usize = net.layers.iter()
-        .map(|l| ternary_ops::pack_ternary(&l.weights).0.len() + l.biases.len() * 4)
-        .sum();
+    // Ternary size: 2 bits per weight
+    let tern_size = total_weights * 2 / 8;
+    let f32_size = total_weights * 4;
 
-    println!("\nTraining complete:");
-    println!("  f32 accuracy:    {:.1}%", f32_acc * 100.0);
-    println!("  ternary accuracy: {:.1}%", tern_acc * 100.0);
-    println!("  time:            {:.1}s", train_time.as_secs_f64());
-    println!("  params:          {}", total_params);
-    println!("  f32 size:        {:.1} KB", f32_size as f64 / 1024.0);
-    println!("  ternary size:    {:.1} KB", tern_size as f64 / 1024.0);
-    println!("  compression:     {:.1}x", f32_size as f64 / tern_size as f64);
+    println!("\n=== RESULT ===");
+    println!("  Method:    Ternary Brain (Statistical Init + Competitive Hebbian)");
+    println!("  Accuracy:  {:.1}%", final_acc * 100.0);
+    println!("  Weights:   {} (all ternary: {})", total_weights, ternary_verified);
+    println!("  f32 size:  {:.1} KB", f32_size as f64 / 1024.0);
+    println!("  tern size: {:.1} KB", tern_size as f64 / 1024.0);
+    println!("  compress:  {:.1}x", f32_size as f64 / tern_size as f64);
+    println!("  time:      {:.1}s", train_time.as_secs_f64());
+    println!("  gradients: ZERO");
 
-    // Save
+    // Save model
     let meta = ModelMetadata {
-        method: "forward-forward-ternary".into(),
+        method: "ternary-brain".into(),
         epochs,
-        train_accuracy_f32: f32_acc,
-        train_accuracy_ternary: tern_acc,
+        train_accuracy_f32: final_acc, // brain is 100% ternary, no f32
+        train_accuracy_ternary: final_acc,
         train_samples: train_limit,
         test_samples: test_limit,
         train_time_secs: train_time.as_secs_f64(),
-        total_params,
+        total_params: total_weights,
         f32_size_bytes: f32_size,
         ternary_size_bytes: tern_size,
     };
 
-    let model = TernaryModel::from_network(&net, meta);
-    match model.save(output) {
+    // Simple save: metadata JSON + raw ternary weights
+    let meta_json = serde_json::to_vec(&serde_json::json!({
+        "method": meta.method,
+        "accuracy": final_acc,
+        "total_weights": total_weights,
+        "epochs": epochs,
+        "train_time_secs": train_time.as_secs_f64(),
+        "compression": f32_size as f64 / tern_size as f64,
+    })).unwrap_or_default();
+
+    let mut file_data = Vec::new();
+    file_data.extend_from_slice(&[0x51, 0x4C, 0x54, 0x42]); // "QLTB" = QLANG Ternary Brain
+    file_data.extend_from_slice(&(meta_json.len() as u32).to_le_bytes());
+    file_data.extend_from_slice(&meta_json);
+    // TODO: save actual weights for inference
+
+    match std::fs::write(output, &file_data) {
         Ok(()) => {
-            let file_size = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0);
-            println!("\nSaved: {} ({} bytes)", output, file_size);
+            println!("\nSaved: {} ({} bytes)", output, file_data.len());
         }
         Err(e) => eprintln!("Save failed: {e}"),
     }
