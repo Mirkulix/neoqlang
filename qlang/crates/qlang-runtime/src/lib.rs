@@ -31,6 +31,7 @@ pub mod bitnet_math;
 pub mod cifar10;
 pub mod cifar10_features;
 pub mod fisher;
+pub mod random_conv_features;
 pub mod forward_forward;
 pub mod quantum_flow;
 pub mod ternary_net;
