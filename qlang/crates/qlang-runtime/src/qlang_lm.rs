@@ -10,7 +10,6 @@
 //! Evaluation: Perplexity on WikiText-2
 
 use crate::mamba::MambaLayer;
-use crate::noprop::NoPropBlock;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -138,17 +137,29 @@ impl QlangLM {
         }
 
         // 3. Output head: [seq, d_model] @ [d_model, vocab] → [seq, vocab]
-        let mut logits = vec![0.0f32; seq_len * self.vocab_size];
-        for t in 0..seq_len {
-            for v in 0..self.vocab_size {
-                let mut sum = 0.0f32;
-                for k in 0..self.d_model {
-                    sum += x[t * self.d_model + k] * self.output_head[k * self.vocab_size + v];
-                }
-                logits[t * self.vocab_size + v] = sum;
-            }
-        }
+        //    Parallel over timesteps
+        let vocab = self.vocab_size;
+        let d = self.d_model;
+        let output_head = &self.output_head;
 
+        let logit_rows: Vec<Vec<f32>> = (0..seq_len)
+            .into_par_iter()
+            .map(|t| {
+                let mut row = vec![0.0f32; vocab];
+                let x_t = &x[t * d..(t + 1) * d];
+                for v in 0..vocab {
+                    let mut sum = 0.0f32;
+                    for k in 0..d {
+                        sum += x_t[k] * output_head[k * vocab + v];
+                    }
+                    row[v] = sum;
+                }
+                row
+            })
+            .collect();
+
+        let mut logits = Vec::with_capacity(seq_len * vocab);
+        for row in logit_rows { logits.extend_from_slice(&row); }
         logits
     }
 
@@ -218,30 +229,57 @@ impl QlangLM {
             x
         };
 
-        // 1. Update output head: d_loss/d_W = hidden^T @ (probs - target)
-        for t in 0..seq_len {
-            let target = tokens[t + 1].min(self.vocab_size - 1);
-            for v in 0..self.vocab_size {
-                let grad = probs[t * self.vocab_size + v] - if v == target { 1.0 } else { 0.0 };
-                for k in 0..self.d_model {
-                    self.output_head[k * self.vocab_size + v] -= lr * grad * x[t * self.d_model + k] / seq_len as f32;
+        // 1. Update output head: parallel over vocab dimensions
+        let vocab = self.vocab_size;
+        let d = self.d_model;
+        let inv_seq = 1.0 / seq_len as f32;
+
+        // Compute deltas in parallel over d_model columns
+        let head_deltas: Vec<Vec<f32>> = (0..d)
+            .into_par_iter()
+            .map(|k| {
+                let mut col_delta = vec![0.0f32; vocab];
+                for t in 0..seq_len {
+                    let target = tokens[t + 1].min(vocab - 1);
+                    let x_tk = x[t * d + k];
+                    for v in 0..vocab {
+                        let grad = probs[t * vocab + v] - if v == target { 1.0 } else { 0.0 };
+                        col_delta[v] += lr * grad * x_tk * inv_seq;
+                    }
                 }
+                col_delta
+            })
+            .collect();
+
+        // Apply deltas
+        for (k, delta) in head_deltas.iter().enumerate() {
+            for v in 0..vocab {
+                self.output_head[k * vocab + v] -= delta[v];
             }
         }
 
-        // 2. Update embeddings: move input token embedding closer to context
-        //    Simple: embedding[token] += lr * gradient_signal_from_output
-        for t in 0..seq_len {
-            let tok = tokens[t].min(self.vocab_size - 1);
-            let target = tokens[t + 1].min(self.vocab_size - 1);
-            // Gradient: push embedding toward predicting correct next token
-            for k in 0..self.d_model {
-                let mut grad_k = 0.0f32;
-                for v in 0..self.vocab_size.min(100) { // limit for speed
-                    let err = probs[t * self.vocab_size + v] - if v == target { 1.0 } else { 0.0 };
-                    grad_k += err * self.output_head[k * self.vocab_size + v];
+        // 2. Update embeddings: parallel over timesteps, then apply
+        let embed_updates: Vec<(usize, Vec<f32>)> = (0..seq_len)
+            .into_par_iter()
+            .map(|t| {
+                let tok = tokens[t].min(vocab - 1);
+                let target = tokens[t + 1].min(vocab - 1);
+                let mut grad = vec![0.0f32; d];
+                for k in 0..d {
+                    let mut g = 0.0f32;
+                    for v in 0..vocab.min(200) {
+                        let err = probs[t * vocab + v] - if v == target { 1.0 } else { 0.0 };
+                        g += err * self.output_head[k * vocab + v];
+                    }
+                    grad[k] = lr * 0.1 * g * inv_seq;
                 }
-                self.embedding[tok * self.d_model + k] -= lr * 0.1 * grad_k / seq_len as f32;
+                (tok, grad)
+            })
+            .collect();
+
+        for (tok, grad) in embed_updates {
+            for k in 0..d {
+                self.embedding[tok * d + k] -= grad[k];
             }
         }
 
