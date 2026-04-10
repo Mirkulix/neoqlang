@@ -34,6 +34,7 @@ pub mod fisher;
 pub mod random_conv_features;
 pub mod vision_transformer;
 pub mod forward_forward;
+pub mod graph_ff_train;
 pub mod quantum_flow;
 pub mod ternary_net;
 pub mod ternary_ops;
