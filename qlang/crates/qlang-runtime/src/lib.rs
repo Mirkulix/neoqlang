@@ -36,6 +36,7 @@ pub mod vision_transformer;
 pub mod forward_forward;
 pub mod graph_ff_train;
 pub mod hdc;
+pub mod lm_export;
 pub mod mamba;
 pub mod mamba_train;
 pub mod neurosymbolic;
