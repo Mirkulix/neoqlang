@@ -21,6 +21,7 @@ tower-http = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 futures = "0.3"
+once_cell = "1.19"
 tokio-stream = { version = "0.1", features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

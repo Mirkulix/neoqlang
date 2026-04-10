@@ -8,6 +8,7 @@ pub mod health;
 pub mod history;
 pub mod memory;
 pub mod messages;
+pub mod organism;
 pub mod proof;
 pub mod providers;
 pub mod train_monitor;

@@ -22,9 +22,10 @@ import HistorieView from './HistorieView'
 import ProviderView from './ProviderView'
 import MessagesView from './MessagesView'
 import TrainingView from './TrainingView'
+import OrganismView from './OrganismView'
 import ActivityFeed from './ActivityFeed'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'historie'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'organism' | 'historie'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
@@ -36,6 +37,7 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'graphs', label: 'QLANG', icon: GitBranch },
   { id: 'messages', label: 'Messages', icon: Mail },
   { id: 'training', label: 'Training', icon: Dna },
+  { id: 'organism', label: 'Organismus', icon: Brain },
   { id: 'historie', label: 'Historie', icon: Clock },
 ]
 
@@ -50,6 +52,7 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
     case 'graphs': return <GraphsView />
     case 'messages': return <MessagesView />
     case 'training': return <TrainingView />
+    case 'organism': return <OrganismView />
     case 'historie': return <HistorieView onNavigate={onNavigate} />
   }
 }
