@@ -27,6 +27,7 @@ pub mod vm;
 pub mod bytecode;
 pub mod debugger;
 pub mod linalg;
+pub mod bitnet_math;
 pub mod fisher;
 pub mod forward_forward;
 pub mod quantum_flow;
