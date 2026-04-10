@@ -390,6 +390,13 @@ impl TrainableLM {
             scaled[0] = f32::NEG_INFINITY;
             scaled[1] = f32::NEG_INFINITY;
 
+            // Repetition penalty: reduce score for tokens already generated
+            for &prev_tok in &tokens {
+                if prev_tok < self.vocab_size {
+                    scaled[prev_tok] -= 2.0; // strong penalty
+                }
+            }
+
             // Top-k filtering: keep only top 40
             let mut indices: Vec<usize> = (0..self.vocab_size).collect();
             indices.sort_by(|&a, &b| scaled[b].partial_cmp(&scaled[a]).unwrap());
