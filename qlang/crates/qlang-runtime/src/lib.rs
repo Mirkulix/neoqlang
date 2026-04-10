@@ -41,6 +41,7 @@ pub mod mamba;
 pub mod mamba_train;
 pub mod neurosymbolic;
 pub mod noprop;
+pub mod organism;
 pub mod ttt;
 pub mod qlang_lm;
 pub mod quantum_flow;

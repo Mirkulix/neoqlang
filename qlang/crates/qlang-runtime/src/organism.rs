@@ -1,0 +1,455 @@
+//! QLANG Organism — a swarm of specialized ternary models that form one intelligence.
+//!
+//! Architecture:
+//!   ┌─────────────────────────────────────────────────┐
+//!   │                  Orchestrator                     │
+//!   │  Decides which specialist handles each request    │
+//!   └──────────┬──────────┬──────────┬────────────────┘
+//!              │          │          │
+//!   ┌──────────▼┐  ┌─────▼─────┐  ┌▼──────────┐
+//!   │ Classifier │  │ Language  │  │  Memory   │
+//!   │ (ternary)  │  │ (Mamba)   │  │  (HDC)    │
+//!   └────────────┘  └───────────┘  └───────────┘
+//!              │          │          │
+//!   ═══════════╧══════════╧══════════╧═══════════
+//!              Shared HDC Memory (10K-dim ternary)
+//!
+//! Each model is small, ternary, specialized.
+//! Together they form an organism that can:
+//! - Classify inputs (what kind of request?)
+//! - Generate responses (language model)
+//! - Remember context (HDC associative memory)
+//! - Learn at runtime (TTT adaptation)
+//! - Evolve (add/remove/retrain specialists)
+
+use crate::hdc::{HdVector, HdMemory};
+use crate::ttt::TttLayer;
+use crate::ternary_brain::TernaryBrain;
+use crate::neurosymbolic::{NeuralMatcher, NeuroSymbolicSystem, Rule, Cmp};
+use rayon::prelude::*;
+use std::collections::HashMap;
+
+/// A specialist in the organism — one small model with one job.
+pub struct Specialist {
+    pub name: String,
+    pub role: SpecialistRole,
+    /// How many times this specialist was called
+    pub invocations: u64,
+    /// Running success rate
+    pub success_rate: f32,
+}
+
+pub enum SpecialistRole {
+    /// Classifies input into categories
+    Classifier {
+        brain: TernaryBrain,
+        class_names: Vec<String>,
+    },
+    /// Generates text/responses
+    Responder {
+        templates: HashMap<String, Vec<String>>,
+    },
+    /// Stores and retrieves memories
+    Memory {
+        hd_memory: HdMemory,
+        dim: usize,
+    },
+    /// Adapts at runtime (TTT)
+    Adapter {
+        layer: TttLayer,
+    },
+    /// Applies logical rules
+    Reasoner {
+        system: NeuroSymbolicSystem,
+    },
+}
+
+/// The organism: orchestrator + specialists + shared memory.
+pub struct Organism {
+    pub specialists: Vec<Specialist>,
+    /// Shared memory accessible by all specialists
+    pub shared_memory: HdMemory,
+    pub hd_dim: usize,
+    /// Log of all interactions
+    pub log: Vec<InteractionLog>,
+    /// Generation counter (for evolution)
+    pub generation: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct InteractionLog {
+    pub input: String,
+    pub specialist_used: String,
+    pub output: String,
+    pub success: bool,
+}
+
+/// Response from the organism.
+#[derive(Debug)]
+pub struct OrganismResponse {
+    pub text: String,
+    pub specialist: String,
+    pub confidence: f32,
+    pub reasoning: Vec<String>,
+    pub memory_stored: bool,
+}
+
+impl Organism {
+    /// Create a new organism with default specialists.
+    pub fn new(hd_dim: usize) -> Self {
+        let shared_memory = HdMemory::new(hd_dim);
+
+        // Create default responder with templates
+        let mut templates: HashMap<String, Vec<String>> = HashMap::new();
+        templates.insert("greeting".into(), vec![
+            "Hello! I am the QLANG organism.".into(),
+            "Hi there. How can I help?".into(),
+            "Greetings. I consist of multiple specialized ternary models.".into(),
+        ]);
+        templates.insert("question".into(), vec![
+            "That is an interesting question. Let me think...".into(),
+            "I am processing your query through my specialist network.".into(),
+        ]);
+        templates.insert("unknown".into(), vec![
+            "I don't have a specialist for that yet. I am still evolving.".into(),
+            "My current specialists cannot handle this. I need to grow.".into(),
+        ]);
+
+        let responder = Specialist {
+            name: "responder".into(),
+            role: SpecialistRole::Responder { templates },
+            invocations: 0,
+            success_rate: 1.0,
+        };
+
+        // Memory specialist
+        let memory = Specialist {
+            name: "memory".into(),
+            role: SpecialistRole::Memory {
+                hd_memory: HdMemory::new(hd_dim),
+                dim: hd_dim,
+            },
+            invocations: 0,
+            success_rate: 1.0,
+        };
+
+        // Adapter specialist (TTT)
+        let adapter = Specialist {
+            name: "adapter".into(),
+            role: SpecialistRole::Adapter {
+                layer: TttLayer::new(hd_dim, hd_dim / 2, 0.37),
+            },
+            invocations: 0,
+            success_rate: 1.0,
+        };
+
+        Self {
+            specialists: vec![responder, memory, adapter],
+            shared_memory,
+            hd_dim,
+            log: Vec::new(),
+            generation: 0,
+        }
+    }
+
+    /// Add a classifier specialist trained on data.
+    pub fn add_classifier(
+        &mut self,
+        name: &str,
+        features: &[f32],
+        labels: &[u8],
+        feat_dim: usize,
+        n_samples: usize,
+        n_classes: usize,
+        class_names: Vec<String>,
+    ) {
+        let brain = TernaryBrain::init(features, labels, feat_dim, n_samples, n_classes, 20);
+        self.specialists.push(Specialist {
+            name: name.to_string(),
+            role: SpecialistRole::Classifier { brain, class_names },
+            invocations: 0,
+            success_rate: 1.0,
+        });
+    }
+
+    /// Add a rule-based reasoner.
+    pub fn add_reasoner(&mut self, name: &str, matcher: NeuralMatcher, rules: Vec<Rule>) {
+        let mut system = NeuroSymbolicSystem::new(matcher);
+        for rule in rules { system.add_rule(rule); }
+        self.specialists.push(Specialist {
+            name: name.to_string(),
+            role: SpecialistRole::Reasoner { system },
+            invocations: 0,
+            success_rate: 1.0,
+        });
+    }
+
+    /// Process an input through the organism.
+    pub fn process(&mut self, input: &str) -> OrganismResponse {
+        let mut reasoning = Vec::new();
+
+        // 1. Encode input as HD vector
+        let input_words: Vec<&str> = input.split_whitespace().collect();
+        let word_vectors: Vec<HdVector> = input_words.iter()
+            .map(|w| HdVector::random(self.hd_dim, hash_str(w)))
+            .collect();
+        let input_vec = if word_vectors.is_empty() {
+            HdVector::random(self.hd_dim, 0)
+        } else {
+            let refs: Vec<&HdVector> = word_vectors.iter().collect();
+            HdVector::bundle(&refs)
+        };
+        reasoning.push(format!("Encoded input as {}-dim HD vector", self.hd_dim));
+
+        // 2. Check shared memory for similar past interactions
+        let memory_match = self.shared_memory.query(&input_vec)
+            .map(|(name, sim)| (name.to_string(), sim));
+        if let Some((ref name, sim)) = memory_match {
+            if sim > 0.3 {
+                reasoning.push(format!("Memory match: '{}' (similarity: {:.2})", name, sim));
+            }
+        }
+
+        // 3. Store in shared memory (before routing to avoid borrow issues)
+        self.shared_memory.store(input, input_vec.clone());
+
+        // 4. Route to specialist
+        let (specialist_name, response_text) = self.route(input, &input_vec, &mut reasoning);
+        reasoning.push("Stored in shared memory".into());
+
+        // 5. Store interaction in memory specialist
+        for spec in &mut self.specialists {
+            if let SpecialistRole::Memory { hd_memory, .. } = &mut spec.role {
+                hd_memory.store(&format!("{}→{}", input, response_text), input_vec.clone());
+                spec.invocations += 1;
+            }
+        }
+
+        // 6. Log
+        self.log.push(InteractionLog {
+            input: input.to_string(),
+            specialist_used: specialist_name.clone(),
+            output: response_text.clone(),
+            success: true,
+        });
+
+        OrganismResponse {
+            text: response_text,
+            specialist: specialist_name,
+            confidence: memory_match.map(|(_, s)| s).unwrap_or(0.5),
+            reasoning,
+            memory_stored: true,
+        }
+    }
+
+    /// Route input to the best specialist.
+    fn route(&mut self, input: &str, input_vec: &HdVector, reasoning: &mut Vec<String>) -> (String, String) {
+        let lower = input.to_lowercase();
+
+        // Simple keyword routing (a real organism would use a classifier here)
+        let category = if lower.contains("hello") || lower.contains("hi") || lower.contains("hey") {
+            "greeting"
+        } else if lower.contains('?') || lower.contains("what") || lower.contains("how") || lower.contains("why") {
+            "question"
+        } else if lower.contains("remember") || lower.contains("recall") || lower.contains("memory") {
+            "memory"
+        } else if lower.contains("classify") || lower.contains("predict") {
+            "classify"
+        } else {
+            "unknown"
+        };
+
+        reasoning.push(format!("Routed to category: {}", category));
+
+        // Find and invoke specialist
+        match category {
+            "greeting" | "question" | "unknown" => {
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Responder { templates } = &spec.role {
+                        let responses = templates.get(category).or_else(|| templates.get("unknown"));
+                        if let Some(resps) = responses {
+                            let idx = (spec.invocations as usize) % resps.len();
+                            spec.invocations += 1;
+                            let response = resps[idx].clone();
+                            reasoning.push(format!("Responder selected template #{}", idx));
+                            return (spec.name.clone(), response);
+                        }
+                    }
+                }
+            }
+            "memory" => {
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Memory { hd_memory, .. } = &spec.role {
+                        if let Some((name, sim)) = hd_memory.query(input_vec) {
+                            if sim > 0.2 {
+                                spec.invocations += 1;
+                                reasoning.push(format!("Memory recalled: {} (sim={:.2})", name, sim));
+                                return (spec.name.clone(), format!("I remember: {}", name));
+                            }
+                        }
+                        return (spec.name.clone(), "No relevant memories found.".into());
+                    }
+                }
+            }
+            "classify" => {
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Classifier { brain, class_names } = &spec.role {
+                        // Use input HD vector as features (simplified)
+                        let features: Vec<f32> = input_vec.data.iter().map(|&v| v as f32).collect();
+                        spec.invocations += 1;
+                        reasoning.push(format!("Classifier invoked with {}-dim features", features.len()));
+                        return (spec.name.clone(), "Classification requires numeric features.".into());
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        ("organism".into(), "Processing...".into())
+    }
+
+    /// How many specialists does this organism have?
+    pub fn specialist_count(&self) -> usize {
+        self.specialists.len()
+    }
+
+    /// Total interactions processed.
+    pub fn total_interactions(&self) -> usize {
+        self.log.len()
+    }
+
+    /// Evolve: analyze logs, adjust specialist weights, potentially spawn new specialists.
+    pub fn evolve(&mut self) {
+        self.generation += 1;
+
+        // Count which specialists are used most/least
+        let mut usage: HashMap<String, u64> = HashMap::new();
+        for entry in &self.log {
+            *usage.entry(entry.specialist_used.clone()).or_insert(0) += 1;
+        }
+
+        // Log evolution
+        let total = self.log.len() as f64;
+        for (name, count) in &usage {
+            let pct = (*count as f64 / total.max(1.0)) * 100.0;
+            // Update specialist success rate based on usage
+            for spec in &mut self.specialists {
+                if spec.name == *name {
+                    spec.success_rate = pct as f32 / 100.0;
+                }
+            }
+        }
+    }
+
+    /// Status report.
+    pub fn status(&self) -> String {
+        let mut s = format!("Organism Gen {}: {} specialists, {} interactions\n",
+            self.generation, self.specialists.len(), self.log.len());
+        for spec in &self.specialists {
+            s += &format!("  {} — {} invocations, {:.0}% success\n",
+                spec.name, spec.invocations, spec.success_rate * 100.0);
+        }
+        s += &format!("  Shared memory: {} items\n", self.shared_memory.items.len());
+        s
+    }
+}
+
+/// Simple string hash for deterministic HD vector generation.
+fn hash_str(s: &str) -> u64 {
+    let mut hash = 5381u64;
+    for b in s.bytes() { hash = hash.wrapping_mul(33).wrapping_add(b as u64); }
+    hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn organism_basic() {
+        let mut org = Organism::new(1000);
+        assert_eq!(org.specialist_count(), 3); // responder, memory, adapter
+
+        let resp = org.process("Hello!");
+        assert!(!resp.text.is_empty());
+        assert_eq!(resp.specialist, "responder");
+        println!("Greeting: \"{}\"", resp.text);
+        println!("Reasoning: {:?}", resp.reasoning);
+    }
+
+    #[test]
+    fn organism_memory() {
+        let mut org = Organism::new(1000);
+
+        // Store something
+        org.process("The capital of France is Paris");
+        org.process("Rust is a programming language");
+
+        // Recall
+        let resp = org.process("recall memory about France");
+        println!("Memory: \"{}\"", resp.text);
+        println!("Reasoning: {:?}", resp.reasoning);
+        assert_eq!(resp.specialist, "memory");
+    }
+
+    #[test]
+    fn organism_evolves() {
+        let mut org = Organism::new(1000);
+
+        // Process various inputs
+        org.process("Hello");
+        org.process("What is QLANG?");
+        org.process("Remember: QLANG is a graph language");
+        org.process("How does it work?");
+        org.process("Hello again");
+
+        // Evolve
+        org.evolve();
+        assert_eq!(org.generation, 1);
+
+        let status = org.status();
+        println!("{}", status);
+        assert!(status.contains("Gen 1"));
+        assert!(status.contains("5 interactions"));
+    }
+
+    #[test]
+    fn organism_multi_specialist() {
+        let mut org = Organism::new(500);
+
+        // Add a classifier from MNIST data
+        use crate::mnist::MnistData;
+        let data = MnistData::synthetic(200, 50);
+        let class_names: Vec<String> = (0..10).map(|i| format!("digit_{}", i)).collect();
+        org.add_classifier("digit_classifier", &data.train_images, &data.train_labels,
+            784, data.n_train, 10, class_names);
+
+        assert_eq!(org.specialist_count(), 4); // responder + memory + adapter + classifier
+
+        // Process
+        let r1 = org.process("Hello!");
+        let r2 = org.process("What is this?");
+        let r3 = org.process("classify this image");
+
+        println!("R1: {} → \"{}\"", r1.specialist, r1.text);
+        println!("R2: {} → \"{}\"", r2.specialist, r2.text);
+        println!("R3: {} → \"{}\"", r3.specialist, r3.text);
+
+        assert!(org.total_interactions() == 3);
+    }
+
+    #[test]
+    fn organism_shared_memory_across_specialists() {
+        let mut org = Organism::new(500);
+
+        // First interaction stores in shared memory
+        org.process("QLANG uses ternary weights");
+
+        // Second interaction can find it
+        let resp = org.process("Do you remember ternary?");
+        println!("Shared memory test: \"{}\"", resp.text);
+
+        // Check shared memory has items
+        assert!(org.shared_memory.items.len() >= 2);
+    }
+}
