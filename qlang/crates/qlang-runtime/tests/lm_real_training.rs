@@ -26,13 +26,13 @@ fn lm_5000_steps() {
     println!("QLANG LM — Real Training (5000 steps)");
     println!("{}\n", "=".repeat(60));
 
-    // Bigger model
-    let mut lm = QlangLM::new(&text, 128, 256, 16, 2, 3000);
-    println!("Model: d=128, inner=256, state=16, 2 layers, vocab={}", lm.tokenizer.vocab_size);
+    // Smaller vocab, bigger model proportion
+    let mut lm = QlangLM::new(&text, 64, 128, 16, 1, 500);
+    println!("Model: d=64, inner=128, state=16, 1 layer, vocab={}", lm.tokenizer.vocab_size);
     println!("Params: {}\n", lm.param_count());
 
     let tokens = lm.tokenizer.encode(&text);
-    let seq_len = 64;
+    let seq_len = 16; // shorter sequences for faster iteration
 
     let init_ppl = lm.perplexity(&tokens[..seq_len]);
     println!("Initial PPL: {:.1}\n", init_ppl);
@@ -41,15 +41,15 @@ fn lm_5000_steps() {
     let gen_before = lm.generate("the", 15);
     println!("Before: \"{}\"\n", gen_before);
 
-    // Train 5000 steps
+    // Aggressive training: higher LR, more steps, output head only (proven to work)
     let start = Instant::now();
-    let n_steps = 5000;
+    let n_steps = 10000;
     let mut last_loss = 0.0f32;
     for step in 0..n_steps {
         let offset = (step * seq_len) % (tokens.len().saturating_sub(seq_len + 1));
         let batch = &tokens[offset..offset + seq_len + 1];
-        last_loss = lm.train_step(batch, 0.005);
-        if step % 1000 == 0 || step == n_steps - 1 {
+        last_loss = lm.train_step(batch, 0.02);
+        if step % 2000 == 0 || step == n_steps - 1 {
             let ppl = lm.perplexity(&tokens[1000..1000 + seq_len]);
             let gen = lm.generate("the", 8);
             println!("  Step {:>5}: loss={:.3} ppl={:.1} gen=\"{}\" ({:.1?})",

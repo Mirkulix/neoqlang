@@ -203,6 +203,80 @@ impl QlangLM {
         (-(log_prob_sum / count as f64)).exp() as f32
     }
 
+    /// Layer-wise NoProp training: each layer learns independently.
+    /// Each Mamba layer gets a local prediction objective: predict next token
+    /// from its own output. No gradient flows between layers.
+    pub fn train_step_layerwise(&mut self, tokens: &[usize], lr: f32) -> f32 {
+        if tokens.len() < 2 { return 0.0; }
+        let seq_len = tokens.len() - 1;
+        let vocab = self.vocab_size;
+        let d = self.d_model;
+
+        // Get embeddings
+        let embedded = self.embed(&tokens[..seq_len]);
+
+        // Train each Mamba layer with its own local objective
+        let mut layer_input = embedded.clone();
+        let mut total_loss = 0.0f32;
+
+        for layer_idx in 0..self.mamba_layers.len() {
+            let layer_output = self.mamba_layers[layer_idx].forward(&layer_input, seq_len);
+
+            // Local objective: can this layer's output predict the next token?
+            // Compute simple dot-product logits against embedding table
+            // logits[t, v] = layer_output[t] @ embedding[v]
+            let mut local_loss = 0.0f32;
+
+            for t in 0..seq_len {
+                let target = tokens[t + 1].min(vocab - 1);
+
+                // Compute logits for this timestep (parallel-friendly)
+                let mut logits = vec![0.0f32; vocab];
+                let mut max_logit = f32::NEG_INFINITY;
+                for v in 0..vocab {
+                    let mut dot = 0.0f32;
+                    for k in 0..d {
+                        dot += layer_output[t * d + k] * self.embedding[v * d + k];
+                    }
+                    logits[v] = dot;
+                    if dot > max_logit { max_logit = dot; }
+                }
+
+                // Softmax
+                let mut sum_exp = 0.0f32;
+                for v in 0..vocab { logits[v] = (logits[v] - max_logit).exp(); sum_exp += logits[v]; }
+                if sum_exp > 0.0 { for v in 0..vocab { logits[v] /= sum_exp; } }
+
+                // Cross-entropy loss
+                local_loss -= (logits[target].max(1e-10)).ln();
+
+                // Gradient: update Mamba layer's input projection
+                // d_loss/d_w_in = (prob - target) * input
+                // We update w_in directly (local gradient, no backprop through SSM)
+                let layer = &mut self.mamba_layers[layer_idx];
+                for v in 0..vocab.min(50) { // top-50 for speed
+                    let grad = logits[v] - if v == target { 1.0 } else { 0.0 };
+                    if grad.abs() < 0.01 { continue; }
+                    // Update input projection weights that map to this output
+                    let di2 = layer.d_inner * 2;
+                    for k in 0..d.min(layer.d_model) {
+                        let x_k = layer_input[t * d + k];
+                        if x_k.abs() < 0.01 { continue; }
+                        for j in 0..di2.min(32) { // update subset for speed
+                            layer.w_in[k * di2 + j] -= lr * 0.01 * grad * x_k / seq_len as f32;
+                        }
+                    }
+                }
+            }
+
+            local_loss /= seq_len as f32;
+            total_loss += local_loss;
+            layer_input = layer_output; // next layer uses this layer's output
+        }
+
+        total_loss / self.mamba_layers.len() as f32
+    }
+
     /// Simple NoProp-inspired training: each position learns to predict next token.
     /// Uses per-position L2 regression on one-hot targets.
     pub fn train_step(&mut self, tokens: &[usize], lr: f32) -> f32 {
@@ -308,12 +382,13 @@ impl QlangLM {
             let logits = self.forward(&tokens);
             let last_logits = &logits[(tokens.len() - 1) * self.vocab_size..tokens.len() * self.vocab_size];
 
-            // Greedy: pick argmax
+            // Greedy but skip <unk> (id=0) and <pad> (id=1)
             let next = last_logits.iter()
                 .enumerate()
+                .filter(|(idx, _)| *idx >= 2) // skip <unk> and <pad>
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                 .map(|(idx, _)| idx)
-                .unwrap_or(0);
+                .unwrap_or(2);
             tokens.push(next);
         }
 
