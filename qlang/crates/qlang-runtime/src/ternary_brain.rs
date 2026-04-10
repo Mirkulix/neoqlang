@@ -133,14 +133,15 @@ impl CompetitiveLayer {
         }
         for k in 0..image_dim { global_mean[k] /= n_samples as f64; }
 
-        let mut neurons = Vec::with_capacity(n_neurons);
-
-        for c in 0..n_classes {
+        // Parallel neuron creation per class
+        let neurons: Vec<TernaryNeuron> = (0..n_classes)
+            .into_par_iter()
+            .flat_map(|c| {
             let indices = &class_indices[c];
             let n_per_subset = indices.len() / neurons_per_class.max(1);
+            let mut class_neurons = Vec::with_capacity(neurons_per_class);
 
             for variant in 0..neurons_per_class {
-                // Each neuron gets a different subset of class samples
                 let start = variant * n_per_subset;
                 let end = if variant == neurons_per_class - 1 {
                     indices.len()
@@ -148,10 +149,8 @@ impl CompetitiveLayer {
                     (variant + 1) * n_per_subset
                 };
                 let subset = &indices[start.min(indices.len())..end.min(indices.len())];
-
                 if subset.is_empty() { continue; }
 
-                // Compute subset mean
                 let mut subset_mean = vec![0.0f64; image_dim];
                 for &idx in subset {
                     for k in 0..image_dim {
@@ -160,11 +159,9 @@ impl CompetitiveLayer {
                 }
                 for k in 0..image_dim { subset_mean[k] /= subset.len() as f64; }
 
-                // Difference from global mean
                 let diff: Vec<f64> = (0..image_dim)
                     .map(|k| subset_mean[k] - global_mean[k])
                     .collect();
-
                 let mean_abs: f64 = diff.iter().map(|d| d.abs()).sum::<f64>() / image_dim as f64;
                 let threshold = mean_abs * 0.5;
 
@@ -180,15 +177,14 @@ impl CompetitiveLayer {
                     .sum();
                 let bias = -(class_score + global_score) / 2;
 
-                neurons.push(TernaryNeuron {
-                    weights,
-                    bias,
+                class_neurons.push(TernaryNeuron {
+                    weights, bias,
                     assigned_class: c as i8,
-                    wins: 0,
-                    correct_wins: 0,
+                    wins: 0, correct_wins: 0,
                 });
             }
-        }
+            class_neurons
+        }).collect();
 
         let actual_neurons = neurons.len();
         Self { neurons, in_dim: image_dim, n_neurons: actual_neurons }
@@ -209,13 +205,11 @@ impl CompetitiveLayer {
         class_scores
     }
 
-    /// Competitive Hebbian refinement (Phase 2).
+    /// Competitive Hebbian refinement (Phase 2) — PARALLEL.
     ///
-    /// For each sample:
-    /// 1. All neurons compute scores
-    /// 2. Winner = neuron with highest score for correct class
-    /// 3. Winner gets Hebbian reinforcement
-    /// 4. Incorrect winners get Hebbian suppression
+    /// 1. Score all samples against all neurons (parallel over samples)
+    /// 2. Collect reinforce/suppress votes per neuron (parallel reduction)
+    /// 3. Apply Hebbian updates (parallel over neurons)
     pub fn refine_step(
         &mut self,
         images: &[f32],
@@ -225,37 +219,63 @@ impl CompetitiveLayer {
         n_classes: usize,
         flip_rate: f32,
     ) {
-        for i in 0..n_samples {
-            let x = &images[i * image_dim..(i + 1) * image_dim];
-            let correct_class = labels[i] as usize;
+        let n_neurons = self.neurons.len();
 
-            // Find best neuron for correct class AND best neuron overall
-            let mut best_correct_idx = 0usize;
-            let mut best_correct_score = i32::MIN;
-            let mut best_any_idx = 0usize;
-            let mut best_any_score = i32::MIN;
+        // Step 1: Parallel scoring — for each sample find best correct + best any
+        let votes: Vec<(usize, usize, usize, usize)> = (0..n_samples)
+            .into_par_iter()
+            .map(|i| {
+                let x = &images[i * image_dim..(i + 1) * image_dim];
+                let correct_class = labels[i] as usize;
 
-            for (idx, neuron) in self.neurons.iter().enumerate() {
-                let s = neuron.score(x);
-                if neuron.assigned_class as usize == correct_class && s > best_correct_score {
-                    best_correct_score = s;
-                    best_correct_idx = idx;
+                let mut best_correct_idx = 0usize;
+                let mut best_correct_score = i32::MIN;
+                let mut best_any_idx = 0usize;
+                let mut best_any_score = i32::MIN;
+
+                for (idx, neuron) in self.neurons.iter().enumerate() {
+                    let s = neuron.score(x);
+                    if neuron.assigned_class as usize == correct_class && s > best_correct_score {
+                        best_correct_score = s;
+                        best_correct_idx = idx;
+                    }
+                    if s > best_any_score {
+                        best_any_score = s;
+                        best_any_idx = idx;
+                    }
                 }
-                if s > best_any_score {
-                    best_any_score = s;
-                    best_any_idx = idx;
-                }
+
+                // Return: (sample_idx, correct_winner_neuron, any_winner_neuron, correct_class)
+                (i, best_correct_idx, best_any_idx, correct_class)
+            })
+            .collect();
+
+        // Step 2: Apply updates — group by neuron for cache efficiency
+        // Collect which samples reinforce/suppress each neuron
+        let mut reinforce: Vec<Vec<usize>> = vec![Vec::new(); n_neurons];
+        let mut suppress: Vec<Vec<usize>> = vec![Vec::new(); n_neurons];
+
+        for &(sample_idx, correct_winner, any_winner, correct_class) in &votes {
+            reinforce[correct_winner].push(sample_idx);
+            if self.neurons[any_winner].assigned_class as usize != correct_class {
+                suppress[any_winner].push(sample_idx);
             }
+        }
 
-            // Reinforce the best neuron for the correct class
-            self.neurons[best_correct_idx].hebbian_update(x, true, flip_rate);
-            self.neurons[best_correct_idx].wins += 1;
-            self.neurons[best_correct_idx].correct_wins += 1;
-
-            // If the overall winner was wrong class → suppress it
-            if self.neurons[best_any_idx].assigned_class as usize != correct_class {
-                self.neurons[best_any_idx].hebbian_update(x, false, flip_rate);
-                self.neurons[best_any_idx].wins += 1;
+        // Step 3: Apply Hebbian updates per neuron (can pick representative sample)
+        for neuron_idx in 0..n_neurons {
+            // Reinforce with first sample that selected this neuron
+            if let Some(&sample_idx) = reinforce[neuron_idx].first() {
+                let x = &images[sample_idx * image_dim..(sample_idx + 1) * image_dim];
+                self.neurons[neuron_idx].hebbian_update(x, true, flip_rate);
+                self.neurons[neuron_idx].wins += reinforce[neuron_idx].len() as u32;
+                self.neurons[neuron_idx].correct_wins += reinforce[neuron_idx].len() as u32;
+            }
+            // Suppress with first sample that mis-selected this neuron
+            if let Some(&sample_idx) = suppress[neuron_idx].first() {
+                let x = &images[sample_idx * image_dim..(sample_idx + 1) * image_dim];
+                self.neurons[neuron_idx].hebbian_update(x, false, flip_rate);
+                self.neurons[neuron_idx].wins += suppress[neuron_idx].len() as u32;
             }
         }
     }
