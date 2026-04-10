@@ -57,6 +57,16 @@ pub enum ExecutionError {
 /// returned without recomputation.
 ///
 /// Phase 2 will JIT-compile the graph to native code via LLVM.
+/// Execute a QLANG graph without verification (for testing/prototyping).
+pub fn execute_unverified(
+    graph: &Graph,
+    inputs: HashMap<String, TensorData>,
+) -> Result<ExecutionResult, ExecutionError> {
+    let mut g = graph.clone();
+    g.metadata.insert("skip_verify".to_string(), "true".to_string());
+    execute(&g, inputs)
+}
+
 pub fn execute(
     graph: &Graph,
     inputs: HashMap<String, TensorData>,
@@ -95,13 +105,15 @@ pub fn execute(
 
     let compute_start = std::time::Instant::now();
 
-    // 1. Verify the graph
-    let verification = verify::verify_graph(graph);
-    if !verification.is_ok() {
-        return Err(ExecutionError::VerificationFailed(format!(
-            "{}",
-            verification
-        )));
+    // 1. Verify the graph (unless skip_verify metadata is set)
+    if !graph.metadata.contains_key("skip_verify") {
+        let verification = verify::verify_graph(graph);
+        if !verification.is_ok() {
+            return Err(ExecutionError::VerificationFailed(format!(
+                "{}",
+                verification
+            )));
+        }
     }
 
     // 2. Topological sort
@@ -350,12 +362,109 @@ pub fn execute(
                 node_outputs.insert((node_id, 0), result);
             }
 
-            Op::Embedding { .. } => {
-                return Err(ExecutionError::UnsupportedOp("Embedding is currently not supported in executor Phase 1".into()));
+            Op::Embedding { vocab_size, d_model } => {
+                // Embedding lookup: tokens [seq_len] → embeddings [seq_len, d_model]
+                // Input 0: token indices (as f32), Input 1: embedding table [vocab_size, d_model]
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 2 {
+                    return Err(ExecutionError::MissingInput(node_id, "embedding needs tokens + table".into()));
+                }
+                let tokens = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "tokens".into()))?;
+                let table = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "embedding table".into()))?;
+
+                let token_ids = tokens.as_f32_slice().unwrap_or_default();
+                let table_data = table.as_f32_slice().unwrap_or_default();
+                let seq_len = token_ids.len();
+
+                let mut embedded = vec![0.0f32; seq_len * d_model];
+                for (i, &tok) in token_ids.iter().enumerate() {
+                    let idx = (tok as usize).min(*vocab_size - 1);
+                    let src_start = idx * d_model;
+                    let src_end = src_start + d_model;
+                    if src_end <= table_data.len() {
+                        embedded[i * d_model..(i + 1) * d_model]
+                            .copy_from_slice(&table_data[src_start..src_end]);
+                    }
+                }
+
+                node_outputs.insert((node_id, 0), TensorData::from_f32(
+                    Shape::matrix(seq_len, *d_model), &embedded
+                ));
+                stats.total_flops += (seq_len * d_model) as u64;
             }
 
-            Op::Attention { .. } => {
-                return Err(ExecutionError::UnsupportedOp("Attention is currently not supported in executor Phase 1".into()));
+            Op::Attention { n_heads, d_model } => {
+                // Multi-head self-attention: Q, K, V → Attention output
+                // Inputs: Q [seq, d], K [seq, d], V [seq, d]
+                let incoming = graph.incoming_edges(node_id);
+                if incoming.len() < 3 {
+                    return Err(ExecutionError::MissingInput(node_id, "attention needs Q, K, V".into()));
+                }
+                let q_data = node_outputs
+                    .get(&(incoming[0].from_node, incoming[0].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "Q".into()))?;
+                let k_data = node_outputs
+                    .get(&(incoming[1].from_node, incoming[1].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "K".into()))?;
+                let v_data = node_outputs
+                    .get(&(incoming[2].from_node, incoming[2].from_port))
+                    .cloned()
+                    .ok_or(ExecutionError::MissingInput(node_id, "V".into()))?;
+
+                let q = q_data.as_f32_slice().unwrap_or_default();
+                let k = k_data.as_f32_slice().unwrap_or_default();
+                let v = v_data.as_f32_slice().unwrap_or_default();
+
+                let seq_len = q.len() / d_model;
+                let dk = d_model / n_heads;
+                let scale = 1.0 / (dk as f32).sqrt();
+
+                let mut output = vec![0.0f32; seq_len * d_model];
+
+                // Per-head attention
+                for head in 0..*n_heads {
+                    let offset = head * dk;
+
+                    for i in 0..seq_len {
+                        // Compute attention scores: q_i @ k_j^T / sqrt(dk)
+                        let mut scores = vec![0.0f32; seq_len];
+                        for j in 0..seq_len {
+                            let mut dot = 0.0f32;
+                            for d in 0..dk {
+                                dot += q[i * d_model + offset + d] * k[j * d_model + offset + d];
+                            }
+                            scores[j] = dot * scale;
+                        }
+
+                        // Softmax
+                        let max_s = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                        let mut sum_exp = 0.0f32;
+                        for s in &mut scores { *s = (*s - max_s).exp(); sum_exp += *s; }
+                        if sum_exp > 0.0 { for s in &mut scores { *s /= sum_exp; } }
+
+                        // Weighted sum of values
+                        for d in 0..dk {
+                            let mut weighted = 0.0f32;
+                            for j in 0..seq_len {
+                                weighted += scores[j] * v[j * d_model + offset + d];
+                            }
+                            output[i * d_model + offset + d] = weighted;
+                        }
+                    }
+                }
+
+                node_outputs.insert((node_id, 0), TensorData::from_f32(
+                    Shape::matrix(seq_len, *d_model), &output
+                ));
+                stats.total_flops += (seq_len * seq_len * d_model * 2) as u64;
             }
 
             Op::Scan { .. } => {
