@@ -13,3 +13,4 @@ tokenizers = "0.21"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+rayon = "1.10"

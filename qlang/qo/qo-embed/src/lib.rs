@@ -227,3 +227,5 @@ mod tests {
     }
 }
 pub mod embed_data;
+pub mod vision;
+pub mod vision_resnet;
