@@ -37,6 +37,7 @@ pub mod forward_forward;
 pub mod graph_ff_train;
 pub mod hdc;
 pub mod mamba;
+pub mod mamba_train;
 pub mod neurosymbolic;
 pub mod noprop;
 pub mod ttt;
