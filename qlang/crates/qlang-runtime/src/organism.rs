@@ -200,6 +200,7 @@ impl Organism {
             HdVector::bundle(&refs)
         };
         reasoning.push(format!("Encoded input as {}-dim HD vector", self.hd_dim));
+        let lower = input.to_lowercase();
 
         // 2. Check shared memory for similar past interactions
         let memory_match = self.shared_memory.query(&input_vec)
@@ -210,19 +211,22 @@ impl Organism {
             }
         }
 
-        // 3. Store in shared memory (before routing to avoid borrow issues)
+        // 3. Route to specialist
+        let (specialist_name, response_text) = self.route(input, &input_vec, &mut reasoning);
+
+        // 4. Store raw input in shared memory (clean, no response chains)
         self.shared_memory.store(input, input_vec.clone());
 
-        // 4. Route to specialist
-        let (specialist_name, response_text) = self.route(input, &input_vec, &mut reasoning);
-        reasoning.push("Stored in shared memory".into());
-
-        // 5. Store interaction in memory specialist
-        for spec in &mut self.specialists {
-            if let SpecialistRole::Memory { hd_memory, .. } = &mut spec.role {
-                hd_memory.store(&format!("{}→{}", input, response_text), input_vec.clone());
-                spec.invocations += 1;
+        // 5. Store meaningful inputs in memory specialist (skip commands/greetings)
+        let is_command = lower.contains("recall") || lower.contains("memory") || lower.contains("hello") || lower.contains("hi ");
+        if !is_command && input.split_whitespace().count() > 3 {
+            for spec in &mut self.specialists {
+                if let SpecialistRole::Memory { hd_memory, .. } = &mut spec.role {
+                    hd_memory.store(input, input_vec.clone());
+                    spec.invocations += 1;
+                }
             }
+            reasoning.push("Stored as knowledge in memory".into());
         }
 
         // 6. Log
