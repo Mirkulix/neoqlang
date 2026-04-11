@@ -77,6 +77,10 @@ path = "src/main.rs"
 name = "qlang"
 path = "src/cli.rs"
 
+[[bin]]
+name = "gpu_train"
+path = "src/gpu_train_bin.rs"
+
 [features]
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]

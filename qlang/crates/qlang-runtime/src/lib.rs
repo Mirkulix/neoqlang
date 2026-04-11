@@ -34,6 +34,7 @@ pub mod fisher;
 pub mod random_conv_features;
 pub mod vision_transformer;
 pub mod forward_forward;
+pub mod gpu_train;
 pub mod graph_ff_train;
 pub mod hdc;
 pub mod lm_export;
