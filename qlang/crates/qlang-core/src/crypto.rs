@@ -169,8 +169,9 @@ pub fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
     sha256(&outer_input)
 }
 
-/// Constant-time comparison to prevent timing attacks.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// Constant-time byte comparison. Returns true if a == b.
+/// Takes same time regardless of where bytes differ (prevents timing attacks).
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -179,6 +180,12 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// Deprecated alias — kept for backward compatibility. Use `ct_eq`.
+#[doc(hidden)]
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    ct_eq(a, b)
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +611,117 @@ mod tests {
 
         let signed = SignedGraph::sign(g, &kp);
         assert!(signed.verify());
+    }
+
+    // ---- Constant-time equality ----
+
+    #[test]
+    fn test_ct_eq_finds_differences() {
+        // 1000 equal pairs
+        let mut x: u64 = 0x1234_5678_9abc_def0;
+        let mut rnd = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+
+        for _ in 0..1000 {
+            let mut a = [0u8; 32];
+            for chunk in a.chunks_exact_mut(8) {
+                chunk.copy_from_slice(&rnd().to_le_bytes());
+            }
+            let b = a;
+            assert!(ct_eq(&a, &b), "equal pairs must compare equal");
+        }
+
+        // 1000 random unequal pairs
+        for _ in 0..1000 {
+            let mut a = [0u8; 32];
+            let mut b = [0u8; 32];
+            for chunk in a.chunks_exact_mut(8) {
+                chunk.copy_from_slice(&rnd().to_le_bytes());
+            }
+            for chunk in b.chunks_exact_mut(8) {
+                chunk.copy_from_slice(&rnd().to_le_bytes());
+            }
+            // Overwhelmingly unequal; if equal by chance, flip a bit.
+            if a == b {
+                b[0] ^= 1;
+            }
+            assert!(!ct_eq(&a, &b), "random pairs must compare unequal");
+        }
+
+        // Edge: different lengths
+        assert!(!ct_eq(&[1, 2, 3], &[1, 2, 3, 4]));
+        // Edge: empty
+        assert!(ct_eq(&[], &[]));
+        // Edge: single-byte difference at end
+        let mut a = [0u8; 64];
+        let mut b = [0u8; 64];
+        b[63] = 1;
+        assert!(!ct_eq(&a, &b));
+        a[63] = 1;
+        assert!(ct_eq(&a, &b));
+    }
+
+    #[test]
+    fn test_ct_eq_timing_statistical() {
+        // Informational only — measures mean/stddev of timing for three cases:
+        //   (1) equal buffers
+        //   (2) buffers differing at the first byte
+        //   (3) buffers differing at the last byte
+        // A timing-safe impl should have similar means. We do NOT assert a
+        // strict bound (flaky on CI), but we print the numbers for audit.
+        use std::time::Instant;
+
+        let a = [0x42u8; 4096];
+        let b = a;
+        let mut c = a;
+        c[0] ^= 1;
+        let mut d = a;
+        d[4095] ^= 1;
+
+        let iters = 20_000;
+
+        let mut warm = 0u64;
+        for _ in 0..1000 {
+            warm = warm.wrapping_add(ct_eq(&a, &b) as u64);
+        }
+        std::hint::black_box(warm);
+
+        let t0 = Instant::now();
+        let mut acc = 0u64;
+        for _ in 0..iters {
+            acc = acc.wrapping_add(ct_eq(&a, &b) as u64);
+        }
+        let eq_ns = t0.elapsed().as_nanos() / iters as u128;
+        std::hint::black_box(acc);
+
+        let t0 = Instant::now();
+        let mut acc = 0u64;
+        for _ in 0..iters {
+            acc = acc.wrapping_add(ct_eq(&a, &c) as u64);
+        }
+        let diff_first_ns = t0.elapsed().as_nanos() / iters as u128;
+        std::hint::black_box(acc);
+
+        let t0 = Instant::now();
+        let mut acc = 0u64;
+        for _ in 0..iters {
+            acc = acc.wrapping_add(ct_eq(&a, &d) as u64);
+        }
+        let diff_last_ns = t0.elapsed().as_nanos() / iters as u128;
+        std::hint::black_box(acc);
+
+        eprintln!(
+            "ct_eq timing (4096B, {} iters): equal={}ns, diff@first={}ns, diff@last={}ns",
+            iters, eq_ns, diff_first_ns, diff_last_ns
+        );
+        // Sanity: all three must be non-zero (compiler must not elide).
+        assert!(eq_ns > 0);
+        assert!(diff_first_ns > 0);
+        assert!(diff_last_ns > 0);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! No HTTP, no network — purely in-process byte buffer exchange to isolate
 //! the cost of the serialization + signature verification.
 
-use qlang_core::crypto::{hmac_sha256, sha256};
+use qlang_core::crypto::{ct_eq, hmac_sha256, sha256};
 use qlang_runtime::mnist::MnistData;
 use qlang_runtime::ternary_brain::TernaryBrain;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -96,7 +96,7 @@ fn qlms_decode_frame(data: &[u8]) -> Result<DecodedPayload, String> {
     }
     let payload = &data[44..44 + payload_len];
     let expected = hmac_sha256(&shared_key(), payload);
-    if expected != sig {
+    if !ct_eq(&expected, &sig) {
         return Err("HMAC mismatch".into());
     }
     let mut o = 0usize;

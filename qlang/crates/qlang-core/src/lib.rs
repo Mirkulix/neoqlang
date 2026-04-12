@@ -15,6 +15,7 @@ pub mod graph;
 pub mod merkle;
 pub mod ops;
 pub mod quantum;
+pub mod replay_guard;
 pub mod serial;
 pub mod stats;
 pub mod tensor;

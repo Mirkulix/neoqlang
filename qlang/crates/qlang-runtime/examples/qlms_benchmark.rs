@@ -17,7 +17,7 @@
 //! HTTP RTT uses a tiny TCP echo loopback (std::net) so we isolate
 //! serialization cost from any heavy server logic.
 
-use qlang_core::crypto::{hmac_sha256, sha256};
+use qlang_core::crypto::{ct_eq, hmac_sha256, sha256};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -103,7 +103,7 @@ fn qlms_decode_frame(data: &[u8]) -> Result<DecodedPayload, String> {
     let payload_len = u32::from_le_bytes(data[40..44].try_into().unwrap()) as usize;
     let payload = &data[44..44 + payload_len];
     let expected = hmac_sha256(&shared_key(), payload);
-    if expected != sig {
+    if !ct_eq(&expected, &sig) {
         return Err("hmac fail".into());
     }
     // payload decode

@@ -31,7 +31,7 @@ use axum::{
     Json,
 };
 use once_cell::sync::Lazy;
-use qlang_core::crypto::{hex, hmac_sha256, sha256};
+use qlang_core::crypto::{ct_eq, hex, hmac_sha256, sha256};
 use qlang_runtime::ternary_brain::TernaryBrain;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -212,9 +212,9 @@ fn decode_qlms(data: &[u8]) -> Result<(u16, [u8; 32], Vec<u8>), String> {
     }
     let payload = data[44..44 + payload_len].to_vec();
 
-    // Verify HMAC
+    // Verify HMAC (constant-time — prevents timing attacks on the tag)
     let expected = hmac_sha256(&shared_key(), &payload);
-    if expected != sig {
+    if !ct_eq(&expected, &sig) {
         return Err("HMAC verification failed".into());
     }
     Ok((kind, sig, payload))
