@@ -12,7 +12,9 @@ import {
   Zap,
   Sun,
   Moon,
+  Sparkles,
 } from 'lucide-react'
+import NeoShell from './neo/NeoShell'
 import ChatView from './ChatView'
 import ConsciousnessView from './ConsciousnessView'
 import GoalsView from './GoalsView'
@@ -30,9 +32,10 @@ import OrganismView from './OrganismView'
 import ActivityFeed from './ActivityFeed'
 import NeoAgents from './neo/NeoAgents'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
+type Tab = 'neo' | 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
+  { id: 'neo', label: 'Neo', icon: Sparkles },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'goals', label: 'Ziele', icon: Target },
   { id: 'agents', label: 'Agenten', icon: Users },
@@ -52,6 +55,7 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
 
 function renderView(tab: Tab, onNavigate: (tab: string) => void) {
   switch (tab) {
+    case 'neo': return <NeoShell />
     case 'chat': return <ChatView />
     case 'goals': return <GoalsView />
     case 'agents': return <AgentsView />
@@ -71,7 +75,7 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('chat')
+  const [activeTab, setActiveTab] = useState<Tab>('neo')
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('qo-theme')
     return saved === 'dark'
