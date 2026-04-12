@@ -1,4 +1,9 @@
-//! Transformer language model training for QLANG.
+//! Transformer Training via Finite-Difference Gradient Estimation
+//!
+//! This module does NOT implement true backpropagation.
+//! Gradients are estimated via finite differences on a subset of parameters.
+//! Status: experimental, not production-grade.
+//! For real backprop-based Transformer training, see `candle_train.rs` (tch-rs path).
 //!
 //! Implements a minimal GPT-style decoder-only transformer:
 //! - Token + positional embeddings
@@ -6,7 +11,7 @@
 //! - Feed-forward network with GELU activation
 //! - Layer normalization (pre-norm architecture)
 //! - Cross-entropy loss for next-token prediction
-//! - Training via random perturbation gradient estimation
+//! - Training via finite-difference gradient estimation (not true backprop)
 //! - Autoregressive text generation
 //!
 //! Uses `crate::accel::matmul` for hardware-accelerated matrix operations.
@@ -529,11 +534,13 @@ impl MiniGPT {
         Self::loss(&logits, targets, seq_len, self.config.vocab_size)
     }
 
-    /// One training step using random-perturbation gradient estimation.
+    /// One training step using finite-difference approximation, not true gradient.
     ///
     /// This avoids implementing full transformer backpropagation.
     /// Instead, we perturb a random subset of parameters, measure the
-    /// change in loss, and use that to estimate the gradient direction.
+    /// change in loss, and use that finite difference to approximate the
+    /// gradient direction. This is NOT a true gradient — it is a
+    /// forward-difference approximation on sampled parameters only.
     ///
     /// Returns the loss value before the update.
     pub fn train_step(&mut self, tokens: &[u32], lr: f32) -> f32 {

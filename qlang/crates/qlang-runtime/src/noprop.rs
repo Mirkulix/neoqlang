@@ -1,19 +1,8 @@
-//! NoProp: Training without full forward or backward propagation.
+//! NoProp - Local loss propagation without backprop chain.
 //!
-//! Based on "NoProp: Training Neural Networks without Full Back-propagation
-//! or Full Forward-propagation" (March 2025).
-//!
-//! Core idea: Each block learns to DENOISE a noisy label embedding.
-//! - Training: block t gets (noisy_label, input) → predicts clean label
-//! - Inference: start from noise → each block denoises one step → final prediction
-//! - No gradient flows between blocks. Each block trains independently.
-//!
-//! This is simpler and stronger than Forward-Forward:
-//! - FF needs positive/negative passes and goodness functions
-//! - NoProp just does regression: predict label embedding from noisy input
-//! - NoProp achieves 99.47% on MNIST, 80.5% on CIFAR-10
-//!
-//! Combined with ternary weights: each block's weights are {-1, 0, +1}.
+//! NOTE: Reference paper claims 99.47% MNIST / 80.5% CIFAR-10.
+//! THIS implementation: tested on synthetic data only, asserts >30% accuracy.
+//! Real benchmark TODO.
 
 use rayon::prelude::*;
 
@@ -307,6 +296,8 @@ mod tests {
         let f32_acc = net.accuracy(&data.test_images, &data.test_labels, data.n_test, false);
         println!("  Final f32: {:.1}%", f32_acc * 100.0);
 
+        // Sanity check only: NoProp + synthetic data should at least beat random (10%).
+        // Real performance benchmarks on MNIST TODO.
         assert!(f32_acc > 0.30, "NoProp must learn (got {:.1}%)", f32_acc * 100.0);
     }
 }

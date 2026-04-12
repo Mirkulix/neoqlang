@@ -1,3 +1,8 @@
+//! IMPORTANT: "Quantum" in IGQK refers to the mathematical formalism
+//! (density matrices, von Neumann entropy) — NOT to quantum computing hardware.
+//! All computations run on classical CPUs/GPUs. The quantum notation enables
+//! compact expression of information-theoretic compression bounds.
+//!
 //! IGQK Mathematical Engine
 //!
 //! Implements the real mathematics from the IGQK theory:

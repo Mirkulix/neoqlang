@@ -2128,6 +2128,7 @@ mod tests {
         let event = WebEvent::CompressionResult {
             method: "ternary".to_string(),
             ratio: 0.25,
+            // Test fixture values
             accuracy_before: 0.95,
             accuracy_after: 0.93,
         };

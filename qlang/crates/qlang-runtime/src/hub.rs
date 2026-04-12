@@ -256,7 +256,7 @@ mod tests {
             version: "1.0.0".into(),
             created_at: "2026-04-03".into(),
             param_count: 1000,
-            accuracy: Some(0.95),
+            accuracy: Some(0.95), // Test fixture, not from real training
             loss: Some(0.05),
             compressed: false,
             compression_ratio: None,

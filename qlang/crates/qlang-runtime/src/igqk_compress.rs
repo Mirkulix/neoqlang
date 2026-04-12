@@ -1,3 +1,8 @@
+//! IMPORTANT: "Quantum" in IGQK refers to the mathematical formalism
+//! (density matrices, von Neumann entropy) — NOT to quantum computing hardware.
+//! All computations run on classical CPUs/GPUs. The quantum notation enables
+//! compact expression of information-theoretic compression bounds.
+//!
 //! IGQK Compression Pipeline — Pure Rust, No Python
 //!
 //! Implements the full IGQK compression from the paper:

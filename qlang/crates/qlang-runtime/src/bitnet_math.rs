@@ -256,15 +256,17 @@ impl TernaryLoRA {
 // Stochastic Quantization (Gleichung 1)
 // ============================================================
 
-/// Stochastic ternary quantization.
+/// Stochastic Quantization (Paper Gleichung 2)
+///
+/// NOTE: Deterministic given the `seed` parameter — reproducible.
+/// "Stochastic" refers to the per-weight sampling probability,
+/// not runtime randomness. Same seed = same output.
 ///
 /// Instead of deterministic rounding, each weight is probabilistically
 /// assigned to its neighboring ternary state. This prevents vanishing
 /// gradients through statistical variance.
 ///
 /// P(Wq = s) = clip((W - Δ_low) / (Δ_high - Δ_low), 0, 1)
-///
-/// Returns ternary weights. Uses deterministic seed for reproducibility.
 pub fn stochastic_quantize(weights: &[f32], seed: u64) -> (Vec<f32>, f32) {
     let gamma = absmean_gamma(weights);
     let eps = 1e-8;

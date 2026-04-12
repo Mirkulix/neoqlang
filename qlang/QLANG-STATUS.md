@@ -1,15 +1,23 @@
-# QLANG Status (10. April 2026)
+# QLANG Status (12. April 2026)
+
+## Honesty Note
+All accuracies below are measured on REAL datasets:
+- MNIST full = 60,000 train / 10,000 test samples
+- MNIST 1K subset = 5,000 train / 1,000 test (subset for fast iteration)
+- Numbers from synthetic data tests are NOT listed — use real datasets only.
+
+Last measured: 2026-04-12 on RTX 2070 Super.
 
 ## Was funktioniert (bewiesen mit Tests)
 
 ### Training
-| Methode | Dataset | Accuracy | Gewichte | Gradients | Zeit |
-|---------|---------|----------|----------|-----------|------|
-| TernaryBrain | MNIST (60K) | **99.6%** | i8 {-1,0,+1} | Nein | 85s |
-| Forward-Forward | MNIST (60K) | **86.5%** ternary | f32 shadow | Nein (lokal) | 25min |
-| Backprop (Referenz) | MNIST (synth) | 76.0% | f32 | Ja | 4s |
-| ResNet-18 + TernaryBrain | CIFAR-10 (10K) | **61.0%** | i8 {-1,0,+1} | Nein | 15min |
-| TernaryBrain direkt | CIFAR-10 | 28.5% | i8 {-1,0,+1} | Nein | 16s |
+| Methode | Dataset | Samples | Accuracy | Source |
+|---------|---------|---------|----------|--------|
+| TernaryBrain + refine | MNIST 1K subset | 5K train / 1K test | **99.6%** | real_mnist_brain.rs test |
+| TernaryBrain + 15 rounds | MNIST full | 60K train / 10K test | **84.6%** | demo.rs 2026-04-12 |
+| FFNetwork f32 | MNIST full | 60K train / 10K test | **90.83%** (20 epochs) | demo.rs |
+| FFNetwork QAT (GPU) | MNIST full | 60K train / 10K test | **84.6%** (30 epochs, 24s) | demo.rs RTX 2070S |
+| IGQK compression | pack_ternary | 570K weights | **16.0x** real | demo.rs |
 
 ### Kommunikation
 - MessageBus: 6 Agenten, QLMS GraphMessages, SSE Live-Stream

@@ -237,6 +237,7 @@ mod tests {
         let mut ckpt = Checkpoint::new(Graph::new("summary_test"));
         ckpt.add_weight(WeightTensor::from_f32("W1", vec![64, 32], &vec![0.0; 64 * 32]));
         ckpt.metadata.epochs_trained = 50;
+        // Test fixture value — does NOT represent a real trained model.
         ckpt.metadata.final_accuracy = 0.95;
 
         let summary = ckpt.summary();
