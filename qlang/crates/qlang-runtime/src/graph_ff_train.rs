@@ -13,9 +13,7 @@
 //! No gradient flows between layers. Each layer is independent.
 //! This means layers can train on different machines.
 
-use crate::accel;
 use rayon::prelude::*;
-use std::collections::HashMap;
 
 /// Trainable weights for one MatMul layer in a QLANG graph.
 #[derive(Clone)]

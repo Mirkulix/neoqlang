@@ -243,7 +243,7 @@ impl NoPropNet {
                 let mut z = vec![0.0f32; self.label_dim];
 
                 // Denoise through all blocks
-                for (step, block) in self.blocks.iter().enumerate() {
+                for (_step, block) in self.blocks.iter().enumerate() {
                     let mut concat = Vec::with_capacity(self.label_dim + self.feat_dim);
                     concat.extend_from_slice(&z);
                     concat.extend_from_slice(feat);

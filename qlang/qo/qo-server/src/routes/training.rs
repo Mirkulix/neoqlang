@@ -1,11 +1,8 @@
 //! QLANG Training API — train ternary models from the browser.
 
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
 

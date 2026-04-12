@@ -25,8 +25,7 @@
 use crate::hdc::{HdVector, HdMemory};
 use crate::ttt::TttLayer;
 use crate::ternary_brain::TernaryBrain;
-use crate::neurosymbolic::{NeuralMatcher, NeuroSymbolicSystem, Rule, Cmp};
-use rayon::prelude::*;
+use crate::neurosymbolic::{NeuralMatcher, NeuroSymbolicSystem, Rule};
 use std::collections::HashMap;
 
 /// A specialist in the organism — one small model with one job.
@@ -37,6 +36,8 @@ pub struct Specialist {
     pub invocations: u64,
     /// Running success rate
     pub success_rate: f32,
+    /// Optional pointer into `evolution::fitness::FitnessTracker` records.
+    pub fitness_id: Option<String>,
 }
 
 pub enum SpecialistRole {
@@ -130,6 +131,7 @@ impl Organism {
             role: SpecialistRole::Responder { templates },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         };
 
         // Memory specialist
@@ -141,6 +143,7 @@ impl Organism {
             },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         };
 
         // Adapter specialist (TTT)
@@ -151,6 +154,7 @@ impl Organism {
             },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         };
 
         Self {
@@ -179,6 +183,7 @@ impl Organism {
             role: SpecialistRole::Classifier { brain, class_names },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         });
     }
 
@@ -196,6 +201,7 @@ impl Organism {
             role: SpecialistRole::Spiking { network, timesteps, class_names },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         });
     }
 
@@ -207,6 +213,7 @@ impl Organism {
             role: SpecialistRole::LanguageModel { lm },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         });
         Ok(())
     }
@@ -220,6 +227,7 @@ impl Organism {
             role: SpecialistRole::Reasoner { system },
             invocations: 0,
             success_rate: 1.0,
+            fitness_id: None,
         });
     }
 

@@ -4,11 +4,6 @@
 //! feature vectors from images. These features are what TernaryBrain needs
 //! to classify CIFAR-10 accurately.
 
-use candle_core::{Device, Tensor, DType};
-use candle_nn::VarBuilder;
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use std::sync::OnceLock;
-
 /// Feature dimension from the vision model.
 pub const VISION_FEATURE_DIM: usize = 512;
 
@@ -20,8 +15,10 @@ pub struct VisionFeatureExtractor {
     /// Projection layer 1: [3072, hidden]
     w1: Vec<f32>,
     b1: Vec<f32>,
-    /// Projection layer 2: [hidden, output_dim]
+    /// Projection layer 2: [hidden, output_dim] — reserved for future 2-layer projection
+    #[allow(dead_code)]
     w2: Vec<f32>,
+    #[allow(dead_code)]
     b2: Vec<f32>,
     hidden_dim: usize,
     output_dim: usize,

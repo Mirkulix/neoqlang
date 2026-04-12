@@ -361,7 +361,7 @@ pub async fn execute_goal_background(
         );
         // Add a node per subtask agent
         let mut prev_node = input;
-        for (agent_name, task_desc, succeeded, _dur) in &subtask_results {
+        for (agent_name, _task_desc, succeeded, _dur) in &subtask_results {
             let model = if *succeeded { "completed" } else { "failed" };
             let node = qlang_graph.add_node(
                 qlang_core::ops::Op::OllamaChat { model: format!("agent_{agent_name}_{model}") },

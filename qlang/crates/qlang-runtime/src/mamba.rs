@@ -17,8 +17,6 @@
 //! Ternary: W_delta, W_B, W_C, linear projections are all {-1, 0, +1}.
 //! This is BitMamba applied to QLANG.
 
-use rayon::prelude::*;
-
 /// One Mamba layer with ternary weights.
 #[derive(Clone)]
 pub struct MambaLayer {
@@ -54,16 +52,16 @@ impl MambaLayer {
         let scale_ssm = (2.0 / (d_inner + d_state) as f64).sqrt() as f32;
         let scale_out = (2.0 / (d_inner + d_model) as f64).sqrt() as f32;
 
-        let w_in: Vec<f32> = (0..d_model * d_inner * 2).map(|i| rand(scale_in)).collect();
-        let w_b: Vec<f32> = (0..d_inner * d_state).map(|i| rand(scale_ssm)).collect();
-        let w_c: Vec<f32> = (0..d_inner * d_state).map(|i| rand(scale_ssm)).collect();
-        let w_delta: Vec<f32> = (0..d_inner).map(|i| rand(0.1)).collect();
+        let w_in: Vec<f32> = (0..d_model * d_inner * 2).map(|_| rand(scale_in)).collect();
+        let w_b: Vec<f32> = (0..d_inner * d_state).map(|_| rand(scale_ssm)).collect();
+        let w_c: Vec<f32> = (0..d_inner * d_state).map(|_| rand(scale_ssm)).collect();
+        let w_delta: Vec<f32> = (0..d_inner).map(|_| rand(0.1)).collect();
         // A initialized as negative log-spaced values (standard for S4/Mamba)
         let a_log: Vec<f32> = (0..d_inner * d_state).map(|i| {
             -((i % d_state + 1) as f32).ln()
         }).collect();
         let d = vec![1.0f32; d_inner]; // skip connection
-        let w_out: Vec<f32> = (0..d_inner * d_model).map(|i| rand(scale_out)).collect();
+        let w_out: Vec<f32> = (0..d_inner * d_model).map(|_| rand(scale_out)).collect();
 
         Self { w_in, w_b, w_c, w_delta, a_log, d, w_out, d_model, d_inner, d_state }
     }

@@ -17,7 +17,7 @@
 //!   3. Wait 6-12 hours
 //!   4. Export as ternary .qlbg model
 
-use crate::mamba_train::{TrainableMamba, TrainableLM};
+use crate::mamba_train::TrainableLM;
 use crate::qlang_lm::Tokenizer;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

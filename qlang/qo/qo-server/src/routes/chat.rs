@@ -18,12 +18,12 @@ use crate::AppState;
 
 /// Build a REAL QLANG graph for a chat interaction.
 /// This graph is executed by qlang_runtime::executor::execute().
-fn build_chat_qlang_graph(system_prompt: &str, user_message: &str) -> Graph {
+fn build_chat_qlang_graph(_system_prompt: &str, _user_message: &str) -> Graph {
     let mut g = Graph::new("qo_chat");
     let str_type = TensorType::new(Dtype::Utf8, Shape::scalar());
 
     // Node 0: System prompt input
-    let system_node = g.add_node(
+    let _system_node = g.add_node(
         Op::Input { name: "system".into() },
         vec![],
         vec![str_type.clone()],
@@ -100,6 +100,7 @@ fn execute_chat_via_qlang(
     Ok((response, graph, duration_ms))
 }
 
+#[allow(dead_code)] // Heuristic reserved for future routing decisions
 fn looks_like_goal(msg: &str) -> bool {
     let prefixes = [
         "ziel:", "goal:", "mach:", "recherchiere", "plane", "baue",

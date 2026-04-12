@@ -173,6 +173,7 @@ pub async fn tool_web_search(query: &str) -> ToolResult {
     }
 }
 
+#[allow(dead_code)] // Utility kept for HTML parsing in future tool outputs
 fn strip_html_tags(s: &str) -> String {
     let mut result = String::new();
     let mut in_tag = false;

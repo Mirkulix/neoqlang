@@ -28,8 +28,9 @@ import GpuTrainingView from './GpuTrainingView'
 import SpikingView from './SpikingView'
 import OrganismView from './OrganismView'
 import ActivityFeed from './ActivityFeed'
+import NeoAgents from './neo/NeoAgents'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
@@ -46,6 +47,7 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'spiking', label: 'Spiking', icon: Brain },
   { id: 'organism', label: 'Organismus', icon: Brain },
   { id: 'historie', label: 'Historie', icon: Clock },
+  { id: 'neo-agents', label: 'Neo Agents', icon: Users },
 ]
 
 function renderView(tab: Tab, onNavigate: (tab: string) => void) {
@@ -64,6 +66,7 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
     case 'spiking': return <SpikingView />
     case 'organism': return <OrganismView />
     case 'historie': return <HistorieView onNavigate={onNavigate} />
+    case 'neo-agents': return <NeoAgents />
   }
 }
 

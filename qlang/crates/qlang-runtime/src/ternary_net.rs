@@ -199,7 +199,7 @@ impl TernaryLayer {
         let in_dim = self.in_dim;
         let threshold = self.goodness_threshold;
         let lr = self.lr;
-        let alpha = self.alpha;
+        let _alpha = self.alpha;
         let inv_batch = 1.0 / batch as f32;
 
         let sample_signals: Vec<(f32, f32)> = (0..batch)

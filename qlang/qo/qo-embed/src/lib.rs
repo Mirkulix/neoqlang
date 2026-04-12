@@ -13,7 +13,6 @@ use candle_core::{Device, Tensor, DType};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use hf_hub::{api::sync::Api, Repo, RepoType};
-use std::path::PathBuf;
 use std::sync::OnceLock;
 use tokenizers::Tokenizer;
 

@@ -9,8 +9,6 @@
 //! - "Ternäre Neuronale Netze: Die Mathematik der 1.58-Bit Ära" — Equations 2,4,8
 //! - "Mathematische Grundlagen Ternärer Netze" — Equations 1-5
 
-use rayon::prelude::*;
-
 // ============================================================
 // Absmean Quantization (BitNet b1.58)
 // ============================================================
@@ -170,14 +168,13 @@ impl TernaryLoRA {
             }
 
             // Compute singular value σ
-            let mut sigma = 0.0f32;
             let mut u_final = vec![0.0f32; out_dim];
             for i in 0..out_dim {
                 for k in 0..in_dim {
                     u_final[i] += residual[i * in_dim + k] * v[k];
                 }
             }
-            sigma = u_final.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let sigma = u_final.iter().map(|x| x * x).sum::<f32>().sqrt();
 
             // Ternarize u and v
             let (t_u, _) = absmean_quantize(&u_final);

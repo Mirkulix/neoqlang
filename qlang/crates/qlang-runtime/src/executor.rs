@@ -762,7 +762,7 @@ pub fn execute(
                 let w_numel = weights.shape.numel().unwrap_or(w_data.len());
                 let x_numel = x.shape.numel().unwrap_or(x_data.len());
                 // Assume square-ish if we can't determine: use shape[1] from matrix
-                let in_dim = (x_numel as f64).sqrt() as usize; // approximate
+                let _in_dim = (x_numel as f64).sqrt() as usize; // approximate
                 let in_dim = if w_numel > 0 && x_numel > 0 {
                     // Heuristic: find in_dim such that w_numel = out_dim * in_dim and x_numel = batch * in_dim
                     // Try common values

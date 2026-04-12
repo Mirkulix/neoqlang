@@ -303,6 +303,11 @@ pub async fn build_app(
         .route("/api/evolution/specialists", get(routes::evolution_daemon::specialists))
         .route("/api/evolution/lineage/{id}", get(routes::evolution_daemon::lineage))
         .route("/api/evolution/stream", get(routes::evolution_daemon::stream))
+        .route("/api/neo/hardware", get(routes::neo::hardware))
+        .route("/api/neo/memory", get(routes::neo::memory))
+        .route("/api/neo/status", get(routes::neo::status))
+        .route("/api/neo/agents", get(routes::neo::list_agents))
+        .route("/api/neo/agents/{id}", get(routes::neo::get_agent))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

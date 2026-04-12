@@ -296,7 +296,7 @@ impl VoteNet {
             // Forward through all layers
             let mut layer_inputs = vec![pos_input.clone()];
             let mut current = pos_input;
-            let input_dim = image_dim + self.n_classes;
+            let _input_dim = image_dim + self.n_classes;
 
             for layer in &self.layers {
                 let act = layer.forward(&current, batch_size);

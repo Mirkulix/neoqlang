@@ -1,12 +1,8 @@
 //! Organism API — interact with the QLANG swarm organism.
 
-use axum::extract::State;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::Mutex;
-
-use crate::AppState;
 
 #[derive(Deserialize)]
 pub struct OrganismInput {
@@ -100,6 +96,29 @@ pub async fn load_model(Json(input): Json<LoadModelInput>) -> Json<serde_json::V
             "ok": false,
             "error": e,
         })),
+    }
+}
+
+/// Lightweight snapshot used by other routes (e.g. /api/neo/*).
+pub struct OrganismSnapshot {
+    pub generation: u32,
+    pub interactions: usize,
+    pub specialists: usize,
+    pub items: Vec<String>,
+}
+
+pub async fn organism_snapshot() -> OrganismSnapshot {
+    let org = ORGANISM.lock().await;
+    OrganismSnapshot {
+        generation: org.generation,
+        interactions: org.total_interactions(),
+        specialists: org.specialist_count(),
+        items: org
+            .shared_memory
+            .items
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect(),
     }
 }
 

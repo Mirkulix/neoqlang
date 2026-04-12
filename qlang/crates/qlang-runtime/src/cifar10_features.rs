@@ -15,6 +15,7 @@ use rayon::prelude::*;
 
 const W: usize = 32;
 const H: usize = 32;
+#[allow(dead_code)] // Channel count constant, kept for reference with W/H
 const C: usize = 3;
 
 /// Extract features from a single CIFAR-10 image [3072] → [FEATURE_DIM].

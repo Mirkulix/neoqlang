@@ -47,6 +47,7 @@ fn phi_mean(m: &SubMatrix) -> f32 {
 /// Weighted reduction using position-dependent coefficients.
 /// Inspired by wavelet decomposition: different positions capture different frequencies.
 #[inline]
+#[allow(dead_code)] // Alternative scoring method for ternary matrix decomposition
 fn phi_wavelet(m: &SubMatrix) -> f32 {
     // For 2×2: coefficients are [1, 1/2, 1/2, 1/4] (low → high frequency)
     // This gives finer granularity than simple mean

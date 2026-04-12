@@ -9,11 +9,10 @@
 
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
-use qlang_core::tensor::{Dtype, Shape, TensorData, TensorType};
+use qlang_core::tensor::{Dtype, Shape, TensorType};
 use qlang_core::binary;
 use crate::mamba_train::TrainableLM;
 use crate::ternary_ops;
-use std::collections::HashMap;
 
 /// Export a trained LM as a QLANG inference graph.
 ///
@@ -45,7 +44,7 @@ pub fn export_graph(lm: &TrainableLM) -> Graph {
 
     // Mamba layers (simplified as MatMul + ReLU chains in the graph)
     let mut prev = embed;
-    for (i, layer) in lm.layers.iter().enumerate() {
+    for (i, _layer) in lm.layers.iter().enumerate() {
         let w_name = format!("mamba_{}_w", i);
         let w_input = g.add_node(
             Op::Input { name: w_name },

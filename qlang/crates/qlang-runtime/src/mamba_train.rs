@@ -6,8 +6,6 @@
 //! This is what was missing: actual gradient-based training of
 //! the sequence model layers.
 
-use rayon::prelude::*;
-
 /// A trainable Mamba-like layer using simple gated recurrence.
 ///
 /// Simplified SSM: h_k = sigmoid(W_h @ h_{k-1}) * tanh(W_x @ x_k)

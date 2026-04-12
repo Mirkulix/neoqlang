@@ -7,7 +7,6 @@
 use candle_core::{Device, Tensor, DType};
 use candle_nn::{Func, Module, VarBuilder};
 use candle_transformers::models::resnet;
-use hf_hub::{api::sync::Api, Repo, RepoType};
 use std::sync::OnceLock;
 
 static RESNET: OnceLock<ResNetExtractor> = OnceLock::new();

@@ -251,7 +251,7 @@ impl TernaryEnsemble {
                 );
 
                 // Update Sample-Gewichte: erhöhe Gewicht für falsch klassifizierte
-                let mut correct_count = 0;
+                let mut _correct_count = 0;
                 for i in 0..n_samples {
                     let x = &images[i * image_dim..(i + 1) * image_dim];
                     let score = classifier.score(x);
@@ -259,7 +259,7 @@ impl TernaryEnsemble {
                     let actual = labels[i] == c as u8;
                     if predicted == actual {
                         sample_weights[i] *= 0.9; // Reduziere Gewicht korrekt klassifizierter
-                        correct_count += 1;
+                        _correct_count += 1;
                     } else {
                         sample_weights[i] *= 1.1; // Erhöhe Gewicht falsch klassifizierter
                     }

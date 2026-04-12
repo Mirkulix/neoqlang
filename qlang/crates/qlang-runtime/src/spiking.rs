@@ -342,7 +342,7 @@ pub fn spikes_to_hd(spike_counts: &[u32], dim: usize, seed: u64) -> HdVector {
     }
 
     let mut accum = vec![0i32; dim];
-    let mut base_seed = seed;
+    let base_seed = seed;
 
     for (i, &count) in spike_counts.iter().enumerate() {
         if count == 0 { continue; }

@@ -8,8 +8,6 @@
 //! All operations are O(D) where D=dimensionality. No multiplication.
 //! This is how brains might encode concepts — distributed, high-dimensional, robust.
 
-use rayon::prelude::*;
-
 /// A hyperdimensional ternary vector.
 #[derive(Clone)]
 pub struct HdVector {

@@ -4,7 +4,6 @@
 //! Trained once at startup, cached in memory, <1ms inference
 
 use qlang_runtime::training::MlpWeights;
-use qlang_runtime::igqk_compress::{compress_ternary, IgqkParams};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,8 +10,6 @@
 //! Combined with ternary weights: shadow weights adapt, ternary stay fixed
 //! for the fast path. Only the shadow adaptation is used during TTT.
 
-use rayon::prelude::*;
-
 /// TTT-enabled layer: standard forward + optional self-supervised adaptation.
 #[derive(Clone)]
 pub struct TttLayer {

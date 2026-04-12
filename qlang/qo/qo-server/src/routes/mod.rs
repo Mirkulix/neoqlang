@@ -11,6 +11,7 @@ pub mod health;
 pub mod history;
 pub mod memory;
 pub mod messages;
+pub mod neo;
 pub mod organism;
 pub mod proof;
 pub mod providers;
