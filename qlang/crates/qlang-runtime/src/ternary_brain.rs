@@ -350,6 +350,18 @@ impl TernaryBrain {
         self.layer.neurons.iter().map(|n| n.weights.len()).sum()
     }
 
+    /// Flatten all neuron weights into a single f32 vector (for IGQK packing).
+    pub fn all_weights_f32(&self) -> Vec<f32> {
+        let total = self.total_weights();
+        let mut out = Vec::with_capacity(total);
+        for neuron in &self.layer.neurons {
+            for &w in &neuron.weights {
+                out.push(w as f32);
+            }
+        }
+        out
+    }
+
     /// Verify all weights are ternary.
     pub fn verify_ternary(&self) -> bool {
         self.layer.neurons.iter().all(|n| {

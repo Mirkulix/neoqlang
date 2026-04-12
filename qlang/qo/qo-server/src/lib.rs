@@ -290,6 +290,7 @@ pub async fn build_app(
         .route("/api/spiking/run", post(routes::spiking::run_spiking))
         .route("/api/spiking/train", post(routes::spiking::train_spiking))
         .route("/api/spiking/status", get(routes::spiking::spiking_status))
+        .route("/api/demo/mnist-igqk", post(routes::demo::start_mnist_igqk_demo))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

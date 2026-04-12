@@ -237,6 +237,90 @@ impl FFLayer {
         (pos_goodness, neg_goodness)
     }
 
+    /// Quantization-Aware Training step with Straight-Through Estimator (STE).
+    ///
+    /// Forward:  Uses ternary weights (absmean-quantized from shadow) → matches inference.
+    /// Backward: Gradients flow to SHADOW (STE = identity in backward pass).
+    ///
+    /// This makes the network learn representations that survive ternarization,
+    /// closing the gap between f32_accuracy and ternary_accuracy.
+    pub fn ff_step_qat(&mut self, pos_input: &[f32], neg_input: &[f32], batch: usize) -> (f32, f32) {
+        use crate::bitnet_math::absmean_quantize;
+
+        // === STEP 1: Quantize shadow → ternary for THIS forward pass ===
+        let (ternary_now, gamma) = absmean_quantize(&self.shadow);
+        self.alpha = gamma;  // keep alpha updated for inference
+        // Swap in ternary weights (will restore after backward)
+        let saved_shadow_copy = self.shadow.clone();
+        // But we forward with alpha * ternary → it's effectively quantized
+        let scaled_ternary: Vec<f32> = ternary_now.iter().map(|&t| gamma * t).collect();
+        let original_shadow = std::mem::replace(&mut self.shadow, scaled_ternary);
+
+        // === STEP 2: Forward with quantized weights ===
+        let pos_act = self.forward(pos_input, batch);
+        let pos_goodness = Self::goodness(&pos_act, batch, self.out_dim);
+        let neg_act = self.forward(neg_input, batch);
+        let neg_goodness = Self::goodness(&neg_act, batch, self.out_dim);
+
+        // Restore real shadow weights for gradient update
+        self.shadow = original_shadow;
+
+        let out_dim = self.out_dim;
+        let in_dim = self.in_dim;
+        let threshold = self.threshold;
+        let lr = self.lr;
+        let inv_batch = 1.0 / batch as f32;
+
+        let sample_signals: Vec<(f32, f32)> = (0..batch)
+            .map(|b| {
+                let pos_g: f32 = (0..out_dim).map(|j| pos_act[b * out_dim + j].powi(2)).sum();
+                let neg_g: f32 = (0..out_dim).map(|j| neg_act[b * out_dim + j].powi(2)).sum();
+                let pos_p = 1.0 / (1.0 + (-(pos_g - threshold)).exp());
+                let neg_p = 1.0 / (1.0 + (-(neg_g - threshold)).exp());
+                (pos_p, neg_p)
+            })
+            .collect();
+
+        // === STEP 3: Backward → gradients flow to SHADOW (STE) ===
+        let shadow_chunks: Vec<(Vec<f32>, f32)> = (0..out_dim)
+            .into_par_iter()
+            .map(|j| {
+                let mut w_delta = vec![0.0f32; in_dim];
+                let mut b_delta = 0.0f32;
+                for b in 0..batch {
+                    let (pos_p, neg_p) = sample_signals[b];
+                    let pos_a = pos_act[b * out_dim + j];
+                    let neg_a = neg_act[b * out_dim + j];
+                    let d_pos = (1.0 - pos_p) * 2.0 * pos_a;
+                    let d_neg = neg_p * 2.0 * neg_a;
+                    for k in 0..in_dim {
+                        let pos_x = pos_input[b * in_dim + k];
+                        let neg_x = neg_input[b * in_dim + k];
+                        w_delta[k] += lr * (d_pos * pos_x - d_neg * neg_x) * inv_batch;
+                    }
+                    b_delta += lr * (d_pos - d_neg) * inv_batch;
+                }
+                (w_delta, b_delta)
+            })
+            .collect();
+
+        for (j, (w_delta, b_delta)) in shadow_chunks.into_iter().enumerate() {
+            for k in 0..in_dim {
+                // STE: write gradient directly to shadow (not to ternary)
+                self.shadow[j * in_dim + k] += w_delta[k];
+            }
+            self.biases[j] += b_delta;
+        }
+
+        // === STEP 4: Re-quantize so .weights reflects current shadow ===
+        let (new_ternary, new_gamma) = absmean_quantize(&self.shadow);
+        self.weights = new_ternary;
+        self.alpha = new_gamma;
+        let _ = saved_shadow_copy;  // unused, just here to keep the pattern explicit
+
+        (pos_goodness, neg_goodness)
+    }
+
     /// Derive ternary weights from shadow weights using adaptive threshold
     /// and compute optimal scale alpha via least-squares:
     ///   alpha = dot(shadow, ternary) / dot(ternary, ternary)
@@ -373,6 +457,55 @@ impl FFNetwork {
         }
 
         // Sync ternary weights from shadow weights after epoch
+        for layer in &mut self.layers {
+            layer.sync_ternary();
+        }
+
+        let count = (n_batches * self.layers.len()) as f32;
+        (total_pos / count, total_neg / count)
+    }
+
+    /// Quantization-Aware Training epoch.
+    /// Uses ff_step_qat: forward with ternary weights, backward to shadow (STE).
+    /// Network learns representations compatible with ternary inference.
+    pub fn train_epoch_qat(
+        &mut self,
+        images: &[f32],
+        labels: &[u8],
+        image_dim: usize,
+        n_samples: usize,
+        batch_size: usize,
+    ) -> (f32, f32) {
+        let n_batches = n_samples / batch_size;
+        let mut total_pos = 0.0f32;
+        let mut total_neg = 0.0f32;
+
+        for batch_idx in 0..n_batches {
+            let offset = batch_idx * batch_size;
+            let batch_images = &images[offset * image_dim..(offset + batch_size) * image_dim];
+            let batch_labels = &labels[offset..offset + batch_size];
+            let pos_input = Self::embed_label(batch_images, batch_labels, image_dim, self.n_classes, batch_size);
+            let neg_input = Self::make_negative(batch_images, batch_labels, image_dim, self.n_classes, batch_size);
+            let mut pos_layer_input = pos_input.clone();
+            let mut neg_layer_input = neg_input.clone();
+
+            for layer in &mut self.layers {
+                let (pg, ng) = layer.ff_step_qat(&pos_layer_input, &neg_layer_input, batch_size);
+                total_pos += pg;
+                total_neg += ng;
+
+                // Pass TERNARY-forwarded outputs to next layer (consistent with QAT)
+                let mut pos_out = layer.forward_ternary(&pos_layer_input, batch_size);
+                FFLayer::normalize(&mut pos_out, batch_size, layer.out_dim);
+                let mut neg_out = layer.forward_ternary(&neg_layer_input, batch_size);
+                FFLayer::normalize(&mut neg_out, batch_size, layer.out_dim);
+                pos_layer_input = pos_out;
+                neg_layer_input = neg_out;
+            }
+        }
+
+        // Final ternary sync (ff_step_qat already keeps .weights up to date,
+        // but this ensures alpha/threshold are consistent)
         for layer in &mut self.layers {
             layer.sync_ternary();
         }

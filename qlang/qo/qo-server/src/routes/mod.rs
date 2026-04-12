@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod chat;
 pub mod consciousness;
+pub mod demo;
 pub mod evolution;
 pub mod goals;
 pub mod gpu_training;
