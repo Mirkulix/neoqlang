@@ -18,6 +18,7 @@ import ConsciousnessView from './ConsciousnessView'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
 import EvolutionView from './EvolutionView'
+import EvolutionStrategyView from './EvolutionStrategyView'
 import GraphsView from './GraphsView'
 import HistorieView from './HistorieView'
 import ProviderView from './ProviderView'
@@ -28,7 +29,7 @@ import SpikingView from './SpikingView'
 import OrganismView from './OrganismView'
 import ActivityFeed from './ActivityFeed'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
@@ -37,6 +38,7 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'consciousness', label: 'Bewusstsein', icon: Brain },
   { id: 'provider', label: 'Provider', icon: Server },
   { id: 'evolution', label: 'Evolution', icon: Dna },
+  { id: 'strategy', label: 'Strategie', icon: GitBranch },
   { id: 'graphs', label: 'QLANG', icon: GitBranch },
   { id: 'messages', label: 'Messages', icon: Mail },
   { id: 'training', label: 'Training', icon: Dna },
@@ -54,6 +56,7 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
     case 'consciousness': return <ConsciousnessView />
     case 'provider': return <ProviderView />
     case 'evolution': return <EvolutionView />
+    case 'strategy': return <EvolutionStrategyView />
     case 'graphs': return <GraphsView />
     case 'messages': return <MessagesView />
     case 'training': return <TrainingView />

@@ -3,6 +3,7 @@ pub mod chat;
 pub mod consciousness;
 pub mod demo;
 pub mod evolution;
+pub mod evolution_daemon;
 pub mod goals;
 pub mod gpu_training;
 pub mod graphs;

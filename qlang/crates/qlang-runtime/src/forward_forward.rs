@@ -16,7 +16,6 @@
 //!
 //! This is gradient-free, layer-local, and produces ternary weights natively.
 
-use crate::accel;
 use rayon::prelude::*;
 
 /// Convert a continuous weight to ternary {-1, 0, +1} using adaptive threshold.

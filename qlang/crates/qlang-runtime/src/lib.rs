@@ -45,6 +45,7 @@ pub mod mamba_train;
 pub mod neurosymbolic;
 pub mod noprop;
 pub mod organism;
+pub mod evolution;
 pub mod spiking;
 pub mod ttt;
 pub mod qlang_lm;

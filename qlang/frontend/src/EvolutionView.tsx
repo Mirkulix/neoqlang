@@ -1,466 +1,602 @@
-import { useState, useEffect } from 'react'
-import { Dna, Play, Check, X, AlertTriangle, TrendingUp, FlaskConical, Star } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Dna, Play, Square, Activity, Users, Award, Zap, TrendingUp } from 'lucide-react'
 
-interface EvolutionState {
-  strategy_weights?: Record<string, number>
-  generation?: number
-  fitness_score?: number
-  entropy?: number
+// ============================================================
+// Types — mirror qlang_runtime::evolution::daemon
+// ============================================================
+
+interface DaemonConfig {
+  interval_secs: number
+  population_size: number
+  mutation_rate: number
+  retire_fraction: number
+  max_age: number
+  seed: number
 }
 
-interface Pattern {
+interface GenerationReport {
+  generation: number
+  timestamp: number
+  population_size: number
+  best_fitness: number
+  avg_fitness: number
+  min_fitness: number
+  best_id: string
+  retired: string[]
+  killed: string[]
+  spawned: string[]
+  notes: string
+}
+
+interface SpecialistInfo {
   id: string
-  name: string
-  description: string
-  severity: string
-  detected_at?: string
+  generation_born: number
+  parent_id: string | null
+  children: string[]
+  fitness: number
+  age: number
+  status: 'active' | 'retired' | 'dead'
+  mutations: number
 }
 
-interface Proposal {
-  id: string
-  title: string
-  description: string
-  status: string
-  proposed_at?: string
+interface StatusResponse {
+  initialized: boolean
+  running?: boolean
+  current_generation?: number
+  uptime_secs?: number
+  population_size?: number
+  best_fitness_ever?: number
+  total_born?: number
+  total_retired?: number
+  total_killed?: number
+  config?: DaemonConfig
+  last_report?: GenerationReport | null
 }
 
-interface StrategyScore {
-  strategy_index: number
-  name: string
-  avg_score: number
-  success_rate: number
-  avg_value_alignment: number
-  avg_duration_ms: number
-  avg_cost: number
-  top_risks: string[]
-  top_benefits: string[]
+// ============================================================
+// Helpers
+// ============================================================
+
+const fitnessColor = (f: number): string => {
+  const clamped = Math.max(0, Math.min(1, f))
+  const hue = clamped * 130 // red 0 → green 130
+  return `hsl(${hue}, 72%, 45%)`
 }
 
-interface SimulationPrediction {
-  scenario_id: number
-  recommended_strategy: number
-  recommended_name: string
-  confidence: number
-  strategy_scores: StrategyScore[]
+const fmtDuration = (secs: number): string => {
+  if (secs < 60) return `${secs}s`
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`
+  const h = Math.floor(secs / 3600)
+  return `${h}h ${Math.floor((secs % 3600) / 60)}m`
 }
 
-const severityBadge: Record<string, string> = {
-  low: 'badge-info',
-  medium: 'badge-pending',
-  high: 'badge-error',
-  info: 'badge-info',
-}
+// ============================================================
+// SVG Fitness Chart
+// ============================================================
 
-export default function EvolutionView() {
-  const [evoState, setEvoState] = useState<EvolutionState | null>(null)
-  const [patterns, setPatterns] = useState<Pattern[]>([])
-  const [proposals, setProposals] = useState<Proposal[]>([])
-  const [analyzing, setAnalyzing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+function FitnessChart({ history }: { history: GenerationReport[] }) {
+  if (history.length < 2) {
+    return (
+      <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+        Warte auf mindestens 2 Generationen...
+      </div>
+    )
+  }
+  const w = 720, h = 220, pad = { t: 16, r: 20, b: 28, l: 44 }
+  const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b
+  const maxGen = history[history.length - 1].generation || 1
+  const minGen = history[0].generation || 0
+  const genRange = Math.max(1, maxGen - minGen)
+  const x = (g: number) => pad.l + ((g - minGen) / genRange) * cw
+  const y = (v: number) => pad.t + ch - Math.max(0, Math.min(1, v)) * ch
 
-  // Simulation state
-  const [simDescription, setSimDescription] = useState('')
-  const [simCount, setSimCount] = useState(20)
-  const [simulating, setSimulating] = useState(false)
-  const [simError, setSimError] = useState<string | null>(null)
-  const [simResult, setSimResult] = useState<SimulationPrediction | null>(null)
+  const bestPath = history.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(r.generation).toFixed(1)},${y(r.best_fitness).toFixed(1)}`).join(' ')
+  const avgPath = history.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(r.generation).toFixed(1)},${y(r.avg_fitness).toFixed(1)}`).join(' ')
 
-  const fetchAll = async () => {
-    try {
-      const [stateRes, patternsRes, proposalsRes] = await Promise.all([
-        fetch('/api/evolution/state').catch(() => null),
-        fetch('/api/evolution/patterns').catch(() => null),
-        fetch('/api/evolution/proposals').catch(() => null),
-      ])
-
-      if (stateRes?.ok) {
-        const data = await stateRes.json()
-        setEvoState(data)
-      }
-      if (patternsRes?.ok) {
-        const data = await patternsRes.json()
-        setPatterns(Array.isArray(data) ? data : (data?.patterns ?? []))
-      }
-      if (proposalsRes?.ok) {
-        const data = await proposalsRes.json()
-        setProposals(Array.isArray(data) ? data : (data?.proposals ?? []))
-      }
-    } catch {
-      // Silently handle — evolution endpoints may not exist yet
+  // Annotate generations with large population delta
+  const deltas: { g: number; label: string }[] = []
+  for (let i = 1; i < history.length; i++) {
+    const delta = history[i].population_size - history[i - 1].population_size
+    if (Math.abs(delta) >= 5) {
+      deltas.push({ g: history[i].generation, label: `${delta > 0 ? '+' : ''}${delta}` })
     }
   }
 
-  useEffect(() => {
-    fetchAll()
-    const interval = setInterval(fetchAll, 10000)
-    return () => clearInterval(interval)
-  }, [])
+  const gridLines = [0, 0.25, 0.5, 0.75, 1]
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: 'auto' }}>
+      {gridLines.map(v => (
+        <g key={v}>
+          <line x1={pad.l} y1={y(v)} x2={w - pad.r} y2={y(v)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3,4" />
+          <text x={pad.l - 6} y={y(v) + 3} textAnchor="end" fontSize={10} fill="var(--text-muted)">{v.toFixed(2)}</text>
+        </g>
+      ))}
+      <line x1={pad.l} y1={pad.t} x2={pad.l} y2={h - pad.b} stroke="var(--border)" />
+      <line x1={pad.l} y1={h - pad.b} x2={w - pad.r} y2={h - pad.b} stroke="var(--border)" />
+      <path d={avgPath} fill="none" stroke="var(--accent-info)" strokeWidth={1.5} strokeDasharray="4,4" />
+      <path d={bestPath} fill="none" stroke="var(--accent-success)" strokeWidth={2} />
+      {deltas.map((d, i) => (
+        <g key={i}>
+          <line x1={x(d.g)} y1={pad.t} x2={x(d.g)} y2={h - pad.b} stroke="var(--accent-warning)" strokeOpacity={0.4} strokeDasharray="2,3" />
+          <text x={x(d.g) + 2} y={pad.t + 10} fontSize={9} fill="var(--accent-warning)">pop {d.label}</text>
+        </g>
+      ))}
+      <text x={w / 2} y={h - 6} textAnchor="middle" fontSize={10} fill="var(--text-muted)">Generation</text>
+      <g transform={`translate(${w - pad.r - 130}, ${pad.t})`}>
+        <rect x={0} y={0} width={126} height={38} fill="var(--bg-secondary)" stroke="var(--border)" rx={4} />
+        <line x1={8} y1={13} x2={24} y2={13} stroke="var(--accent-success)" strokeWidth={2} />
+        <text x={28} y={16} fontSize={10} fill="var(--text-primary)">best fitness</text>
+        <line x1={8} y1={28} x2={24} y2={28} stroke="var(--accent-info)" strokeWidth={1.5} strokeDasharray="4,4" />
+        <text x={28} y={31} fontSize={10} fill="var(--text-primary)">avg fitness</text>
+      </g>
+    </svg>
+  )
+}
 
-  const handleAnalyze = async () => {
-    setAnalyzing(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/evolution/analyze', { method: 'POST' })
-      if (!res.ok) throw new Error('Analyse fehlgeschlagen')
-      await fetchAll()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setAnalyzing(false)
-    }
+// ============================================================
+// SVG Lineage Tree
+// ============================================================
+
+function LineageTree({ nodes, focusId }: { nodes: SpecialistInfo[]; focusId: string }) {
+  if (nodes.length === 0) {
+    return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Keine Daten.</div>
+  }
+  // Assign depth (generation - min generation in subset).
+  const minGen = Math.min(...nodes.map(n => n.generation_born))
+  const maxGen = Math.max(...nodes.map(n => n.generation_born))
+  const layers: Record<number, SpecialistInfo[]> = {}
+  for (const n of nodes) {
+    const depth = n.generation_born - minGen
+    if (!layers[depth]) layers[depth] = []
+    layers[depth].push(n)
+  }
+  const depthCount = Math.max(1, maxGen - minGen + 1)
+  const w = 720, h = Math.max(180, depthCount * 90)
+  const layerH = h / depthCount
+
+  // Position nodes: spread across x axis within their layer.
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (let d = 0; d < depthCount; d++) {
+    const layer = layers[d] || []
+    const n = layer.length
+    layer.forEach((node, i) => {
+      const x = ((i + 1) / (n + 1)) * w
+      const y = d * layerH + layerH / 2
+      positions[node.id] = { x, y }
+    })
   }
 
-  const handleProposal = async (id: string, action: 'approve' | 'reject') => {
-    try {
-      await fetch(`/api/evolution/proposals/${id}/${action}`, { method: 'POST' })
-      fetchAll()
-    } catch {}
-  }
-
-  const handleSimulate = async () => {
-    if (!simDescription.trim()) return
-    setSimulating(true)
-    setSimError(null)
-    setSimResult(null)
-    try {
-      const res = await fetch('/api/simulation/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: simDescription, num_simulations: simCount }),
+  const edges: { x1: number; y1: number; x2: number; y2: number; color: string }[] = []
+  const idSet = new Set(nodes.map(n => n.id))
+  for (const n of nodes) {
+    if (n.parent_id && idSet.has(n.parent_id) && positions[n.parent_id] && positions[n.id]) {
+      edges.push({
+        x1: positions[n.parent_id].x,
+        y1: positions[n.parent_id].y + 10,
+        x2: positions[n.id].x,
+        y2: positions[n.id].y - 10,
+        color: 'var(--border)',
       })
-      if (!res.ok) throw new Error('Simulation fehlgeschlagen')
-      const data: SimulationPrediction = await res.json()
-      setSimResult(data)
-    } catch (err) {
-      setSimError((err as Error).message)
-    } finally {
-      setSimulating(false)
     }
   }
 
-  const hasData = evoState?.strategy_weights || patterns.length > 0 || proposals.length > 0
+  const statusColor = (s: SpecialistInfo['status']) =>
+    s === 'active' ? 'var(--accent-success)' : s === 'retired' ? 'var(--text-muted)' : '#1a1a1a'
 
   return (
-    <div className="view">
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div className="evo-icon-wrapper">
-            <Dna size={24} />
-          </div>
-          <div>
-            <h2 className="heading" style={{ fontSize: '18px', margin: 0 }}>Evolution</h2>
-            {evoState?.generation != null && (
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                Generation {evoState.generation}
-                {evoState.fitness_score != null && ` \u00b7 Fitness: ${(evoState.fitness_score * 100).toFixed(1)}%`}
-                {evoState.entropy != null && ` \u00b7 Entropie: ${evoState.entropy.toFixed(4)}`}
-              </div>
-            )}
-          </div>
-        </div>
-        <button
-          className="btn btn-primary"
-          onClick={handleAnalyze}
-          disabled={analyzing}
-        >
-          <Play size={16} />
-          {analyzing ? 'Analysiere...' : 'Analyse starten'}
-        </button>
-      </div>
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: 'auto' }}>
+      {edges.map((e, i) => (
+        <line key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke={e.color} strokeWidth={1} />
+      ))}
+      {nodes.map(n => {
+        const p = positions[n.id]
+        if (!p) return null
+        const isFocus = n.id === focusId
+        return (
+          <g key={n.id}>
+            <circle
+              cx={p.x} cy={p.y} r={isFocus ? 11 : 8}
+              fill={statusColor(n.status)}
+              stroke={isFocus ? 'var(--accent-primary)' : 'var(--bg-primary)'}
+              strokeWidth={isFocus ? 3 : 1.5}
+            />
+            <text x={p.x} y={p.y + 24} textAnchor="middle" fontSize={9} fill="var(--text-muted)" style={{ fontFamily: 'var(--font-mono)' }}>
+              {n.id.slice(-6)}
+            </text>
+            <text x={p.x} y={p.y + 35} textAnchor="middle" fontSize={9} fill={fitnessColor(n.fitness)}>
+              f={n.fitness.toFixed(2)}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
 
-      {error && (
-        <div style={{ marginBottom: '16px', fontSize: '12px', color: 'var(--accent-danger)' }}>{error}</div>
-      )}
+// ============================================================
+// Main component
+// ============================================================
 
-      {!hasData && (
-        <div className="empty-state">
-          <Dna size={40} className="empty-icon" />
-          <div className="empty-title">Evolution -- Phase 4</div>
-          <div className="empty-hint">
-            Starte eine Analyse, um Muster zu erkennen und Verbesserungsvorschl&auml;ge zu generieren.
-          </div>
-        </div>
-      )}
+export default function EvolutionView() {
+  const [status, setStatus] = useState<StatusResponse | null>(null)
+  const [history, setHistory] = useState<GenerationReport[]>([])
+  const [specialists, setSpecialists] = useState<SpecialistInfo[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [lineage, setLineage] = useState<SpecialistInfo[]>([])
+  const [serverError, setServerError] = useState<string | null>(null)
 
-      {hasData && (
-        <>
-          {/* Strategy weights */}
-          {evoState?.strategy_weights && Object.keys(evoState.strategy_weights).length > 0 && (
-            <div className="card-static" style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                <TrendingUp size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading" style={{ fontSize: '13px', margin: 0 }}>Strategie-Gewichte</h3>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {Object.entries(evoState.strategy_weights).map(([key, val]) => (
-                  <div key={key}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '12px' }}>{key}</span>
-                      <span className="mono" style={{ fontSize: '12px', color: 'var(--accent-primary)' }}>
-                        {(val * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="progress-track">
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${Math.min(100, val * 100)}%`,
-                          background: 'var(--accent-primary)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+  const [cfg, setCfg] = useState<DaemonConfig>({
+    interval_secs: 10,
+    population_size: 50,
+    mutation_rate: 0.01,
+    retire_fraction: 0.2,
+    max_age: 30,
+    seed: 42,
+  })
+
+  const streamAbort = useRef<AbortController | null>(null)
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const r = await fetch('/api/evolution/status')
+      if (!r.ok) throw new Error(`status ${r.status}`)
+      const s: StatusResponse = await r.json()
+      setStatus(s)
+      setServerError(null)
+    } catch (e) {
+      setServerError((e as Error).message)
+    }
+  }, [])
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const r = await fetch('/api/evolution/history')
+      if (r.ok) setHistory(await r.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchSpecialists = useCallback(async () => {
+    try {
+      const r = await fetch('/api/evolution/specialists')
+      if (r.ok) setSpecialists(await r.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchLineage = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/evolution/lineage/${id}`)
+      if (r.ok) setLineage(await r.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  // Initial load + slow poll
+  useEffect(() => {
+    fetchStatus()
+    fetchHistory()
+    fetchSpecialists()
+    const t = setInterval(() => {
+      fetchStatus()
+      fetchSpecialists()
+    }, 5000)
+    return () => clearInterval(t)
+  }, [fetchStatus, fetchHistory, fetchSpecialists])
+
+  // SSE — reconnects on disconnect
+  useEffect(() => {
+    let cancelled = false
+    const connect = () => {
+      if (cancelled) return
+      const ctrl = new AbortController()
+      streamAbort.current = ctrl
+      fetch('/api/evolution/stream', { signal: ctrl.signal })
+        .then(async res => {
+          if (!res.ok || !res.body || cancelled) return
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let currentEvent = ''
+          while (!cancelled) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+            for (const line of lines) {
+              if (line.startsWith('event: ')) currentEvent = line.slice(7).trim()
+              else if (line.startsWith('data: ')) {
+                try {
+                  const parsed = JSON.parse(line.slice(6)) as GenerationReport
+                  if (currentEvent === 'generation') {
+                    setHistory(prev => [...prev, parsed].slice(-500))
+                    fetchStatus()
+                    fetchSpecialists()
+                  }
+                } catch { /* skip */ }
+              }
+            }
+          }
+        })
+        .catch(() => { /* reconnect below */ })
+        .finally(() => {
+          if (!cancelled) setTimeout(connect, 3000)
+        })
+    }
+    connect()
+    return () => { cancelled = true; streamAbort.current?.abort() }
+  }, [fetchStatus, fetchSpecialists])
+
+  const onStart = async () => {
+    try {
+      await fetch('/api/evolution/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      })
+      fetchStatus()
+    } catch (e) {
+      setServerError((e as Error).message)
+    }
+  }
+
+  const onStop = async () => {
+    try {
+      await fetch('/api/evolution/stop', { method: 'POST' })
+      fetchStatus()
+    } catch (e) {
+      setServerError((e as Error).message)
+    }
+  }
+
+  const onSelect = (id: string) => {
+    setSelectedId(id)
+    fetchLineage(id)
+  }
+
+  const running = !!status?.running
+  const initialized = !!status?.initialized
+
+  const activeSpecialists = useMemo(
+    () => specialists.filter(s => s.status === 'active').slice(0, 100),
+    [specialists],
+  )
+  const feedReports = useMemo(() => [...history].reverse().slice(0, 25), [history])
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '6px 10px', borderRadius: 6,
+    border: '1px solid var(--border)', background: 'var(--bg-primary)',
+    color: 'var(--text-primary)', fontSize: 13,
+  }
+
+  return (
+    <div className="view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* --- Control Panel ------------------------------------------------ */}
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <Dna size={18} style={{ color: 'var(--accent-primary)' }} />
+          <h3 className="heading" style={{ margin: 0, fontSize: 14 }}>Evolution Daemon</h3>
+          {running && (
+            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10,
+              background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)',
+              color: 'var(--accent-success)', fontWeight: 600 }}>
+              <Zap size={10} style={{ marginRight: 4 }} /> RUNNING
+            </span>
           )}
-
-          {/* Patterns */}
-          {patterns.length > 0 && (
-            <div className="card-static" style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                <AlertTriangle size={16} style={{ color: 'var(--accent-warning)' }} />
-                <h3 className="heading" style={{ fontSize: '13px', margin: 0 }}>Erkannte Muster</h3>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {patterns.map(p => (
-                  <div key={p.id} className="evo-pattern-item">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{p.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          {p.description}
-                        </div>
-                      </div>
-                      <span className={`badge ${severityBadge[p.severity] ?? 'badge-info'}`}>
-                        {p.severity}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {!initialized && !serverError && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Daemon nicht initialisiert — Start klicken
+            </span>
           )}
-
-          {/* Proposals */}
-          {proposals.length > 0 && (
-            <div className="card-static">
-              <h3 className="heading" style={{ fontSize: '13px', margin: '0 0 16px' }}>Vorschl&auml;ge</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {proposals.map(p => (
-                  <div key={p.id} className="evo-proposal-card">
-                    <div>
-                      <div style={{ fontSize: '13px', fontWeight: 500 }}>{p.title}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                        {p.description}
-                      </div>
-                    </div>
-                    {p.status === 'pending' && (
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                        <button
-                          className="btn btn-ghost"
-                          style={{ color: 'var(--accent-success)', minHeight: '36px', padding: '4px 12px' }}
-                          onClick={() => handleProposal(p.id, 'approve')}
-                        >
-                          <Check size={16} /> Annehmen
-                        </button>
-                        <button
-                          className="btn btn-ghost"
-                          style={{ color: 'var(--accent-danger)', minHeight: '36px', padding: '4px 12px' }}
-                          onClick={() => handleProposal(p.id, 'reject')}
-                        >
-                          <X size={16} /> Ablehnen
-                        </button>
-                      </div>
-                    )}
-                    {p.status !== 'pending' && (
-                      <span
-                        className={`badge ${p.status === 'approved' ? 'badge-completed' : 'badge-error'}`}
-                        style={{ marginTop: '8px', alignSelf: 'flex-start' }}
-                      >
-                        {p.status === 'approved' ? 'Genehmigt' : 'Abgelehnt'}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+          {serverError && (
+            <span style={{ fontSize: 11, color: 'var(--accent-danger)' }}>
+              Server nicht erreichbar: {serverError}
+            </span>
           )}
-        </>
-      )}
-
-      {/* Simulation Section */}
-      <div className="card-static evo-simulation-section" style={{ marginTop: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-          <FlaskConical size={18} style={{ color: 'var(--accent-info)' }} />
-          <h3 className="heading" style={{ fontSize: '13px', margin: 0 }}>Szenario-Simulation</h3>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-          <input
-            className="input"
-            style={{ flex: 1, fontSize: '13px' }}
-            placeholder="Beschreibe ein Szenario..."
-            value={simDescription}
-            onChange={e => setSimDescription(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSimulate()}
-          />
-          <input
-            type="number"
-            className="input"
-            style={{ width: '80px', fontSize: '13px' }}
-            title="Anzahl Simulationen"
-            min={1}
-            max={200}
-            value={simCount}
-            onChange={e => setSimCount(Number(e.target.value))}
-          />
-          <button
-            className="btn btn-primary"
-            onClick={handleSimulate}
-            disabled={simulating || !simDescription.trim()}
-            style={{ minWidth: '110px' }}
-          >
-            <Play size={15} />
-            {simulating ? 'Simuliere...' : 'Simulieren'}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 12 }}>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Intervall (s)</span>
+            <input type="range" min={1} max={60} step={1} value={cfg.interval_secs}
+              onChange={e => setCfg(c => ({ ...c, interval_secs: parseInt(e.target.value) }))}
+              disabled={running} style={{ width: '100%' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{cfg.interval_secs}s</span>
+          </label>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Population</span>
+            <input type="range" min={4} max={200} step={1} value={cfg.population_size}
+              onChange={e => setCfg(c => ({ ...c, population_size: parseInt(e.target.value) }))}
+              disabled={running} style={{ width: '100%' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{cfg.population_size}</span>
+          </label>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Mutation Rate</span>
+            <input type="range" min={0} max={0.2} step={0.005} value={cfg.mutation_rate}
+              onChange={e => setCfg(c => ({ ...c, mutation_rate: parseFloat(e.target.value) }))}
+              disabled={running} style={{ width: '100%' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{cfg.mutation_rate.toFixed(3)}</span>
+          </label>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Retire Frac</span>
+            <input type="range" min={0} max={0.8} step={0.01} value={cfg.retire_fraction}
+              onChange={e => setCfg(c => ({ ...c, retire_fraction: parseFloat(e.target.value) }))}
+              disabled={running} style={{ width: '100%' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{(cfg.retire_fraction * 100).toFixed(0)}%</span>
+          </label>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Max Age (gens)</span>
+            <input type="number" min={1} max={500} value={cfg.max_age}
+              onChange={e => setCfg(c => ({ ...c, max_age: parseInt(e.target.value) || 1 }))}
+              disabled={running} style={inputStyle} />
+          </label>
+          <label style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Seed</span>
+            <input type="number" value={cfg.seed}
+              onChange={e => setCfg(c => ({ ...c, seed: parseInt(e.target.value) || 0 }))}
+              disabled={running} style={inputStyle} />
+          </label>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" onClick={onStart} disabled={running}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px', fontSize: 13 }}>
+            <Play size={14} /> Start
           </button>
-        </div>
-        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-          Anzahl Simulationen: {simCount}
-        </div>
-
-        {simError && (
-          <div style={{ fontSize: '12px', color: 'var(--accent-danger)', marginBottom: '12px' }}>{simError}</div>
-        )}
-
-        {simResult && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {/* Confidence meter */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Konfidenz</span>
-              <div className="progress-track" style={{ flex: 1 }}>
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${Math.round(simResult.confidence * 100)}%`,
-                    background: simResult.confidence > 0.7 ? 'var(--accent-success)' : 'var(--accent-warning)',
-                  }}
-                />
-              </div>
-              <span className="mono" style={{ fontSize: '12px', color: 'var(--accent-primary)', minWidth: '38px', textAlign: 'right' }}>
-                {Math.round(simResult.confidence * 100)}%
-              </span>
+          <button className="btn" onClick={onStop} disabled={!running}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px', fontSize: 13,
+              background: running ? 'color-mix(in srgb, var(--accent-danger) 15%, transparent)' : 'var(--bg-secondary)',
+              color: running ? 'var(--accent-danger)' : 'var(--text-muted)',
+              border: '1px solid var(--border)', borderRadius: 6, cursor: running ? 'pointer' : 'not-allowed' }}>
+            <Square size={14} /> Stop
+          </button>
+          {status?.current_generation != null && (
+            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)',
+              display: 'flex', alignItems: 'center', gap: 16, fontFamily: 'var(--font-mono)' }}>
+              <span>Gen <b style={{ color: 'var(--text-primary)' }}>{status.current_generation}</b></span>
+              <span>Uptime <b style={{ color: 'var(--text-primary)' }}>{fmtDuration(status.uptime_secs || 0)}</b></span>
+              <span>Best <b style={{ color: 'var(--accent-success)' }}>{(status.best_fitness_ever || 0).toFixed(3)}</b></span>
             </div>
-
-            {/* Strategy cards */}
-            {simResult.strategy_scores.map(s => {
-              const isRecommended = s.strategy_index === simResult.recommended_strategy
-              return (
-                <div
-                  key={s.strategy_index}
-                  className="evo-sim-strategy-card"
-                  style={isRecommended ? { borderColor: 'var(--accent-success)', background: 'color-mix(in srgb, var(--accent-success) 6%, var(--bg-primary))' } : {}}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {isRecommended && <Star size={13} style={{ color: 'var(--accent-success)' }} fill="currentColor" />}
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: isRecommended ? 'var(--accent-success)' : undefined }}>
-                        {s.name}
-                      </span>
-                    </div>
-                    {isRecommended && (
-                      <span className="badge badge-completed" style={{ fontSize: '10px' }}>Empfohlen</span>
-                    )}
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', marginBottom: '8px' }}>
-                    <div style={{ textAlign: 'center' }}>
-                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                        {Math.round(s.success_rate * 100)}%
-                      </div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Erfolg</div>
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                        {s.avg_score.toFixed(2)}
-                      </div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Ø Score</div>
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div className="mono" style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                        {Math.round(s.avg_value_alignment * 100)}%
-                      </div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Werte</div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: s.top_risks.length > 0 || s.top_benefits.length > 0 ? '8px' : 0 }}>
-                    <span>{Math.round(s.avg_duration_ms / 1000)}s Dauer</span>
-                    <span>{s.avg_cost === 0 ? 'kostenlos' : `$${s.avg_cost.toFixed(4)}`}</span>
-                  </div>
-
-                  {s.top_benefits.length > 0 && (
-                    <div style={{ marginBottom: '4px' }}>
-                      {s.top_benefits.map((b, i) => (
-                        <div key={i} style={{ fontSize: '11px', color: 'var(--accent-success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Check size={10} /> {b}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {s.top_risks.length > 0 && (
-                    <div>
-                      {s.top_risks.map((r, i) => (
-                        <div key={i} style={{ fontSize: '11px', color: 'var(--accent-danger)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <AlertTriangle size={10} /> {r}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      <style>{`
-        .evo-icon-wrapper {
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: var(--radius-md);
-          background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-          color: var(--accent-primary);
-        }
-        .evo-pattern-item {
-          padding: 10px 14px;
-          background: var(--bg-primary);
-          border-radius: var(--radius-sm);
-          border-left: 3px solid var(--accent-warning);
-        }
-        .evo-proposal-card {
-          padding: 14px 16px;
-          background: var(--bg-primary);
-          border-radius: var(--radius-md);
-          border: 1px solid var(--border);
-          display: flex;
-          flex-direction: column;
-        }
-        .evo-simulation-section {
-          border-color: var(--accent-info);
-          border-left: 3px solid var(--accent-info);
-        }
-        .evo-sim-strategy-card {
-          padding: 12px 14px;
-          background: var(--bg-primary);
-          border-radius: var(--radius-md);
-          border: 1px solid var(--border);
-        }
-      `}</style>
+      {/* --- Stats cards -------------------------------------------------- */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        <StatCard label="Generations" value={`${status?.current_generation ?? 0}`} icon={TrendingUp} color="var(--accent-primary)" />
+        <StatCard label="Population" value={`${status?.population_size ?? 0}`} icon={Users} color="var(--accent-info)" />
+        <StatCard label="Best ever" value={(status?.best_fitness_ever ?? 0).toFixed(3)} icon={Award} color="var(--accent-success)" />
+        <StatCard label="Born" value={`${status?.total_born ?? 0}`} icon={Activity} color="var(--accent-purple)" />
+        <StatCard label="Retired" value={`${status?.total_retired ?? 0}`} icon={Activity} color="var(--accent-warning)" />
+        <StatCard label="Killed" value={`${status?.total_killed ?? 0}`} icon={Activity} color="var(--accent-danger)" />
+      </div>
+
+      {/* --- Fitness chart ------------------------------------------------ */}
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Activity size={16} style={{ color: 'var(--accent-success)' }} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Fitness über Generationen</span>
+          {running && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10,
+            background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)',
+            color: 'var(--accent-success)', fontWeight: 600 }}>LIVE</span>}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+            {history.length} Reports
+          </span>
+        </div>
+        <FitnessChart history={history} />
+      </div>
+
+      {/* --- Two-column layout: specialists + reports --------------------- */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+        <div className="card" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Users size={16} style={{ color: 'var(--accent-info)' }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Specialists (aktiv)</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+              {activeSpecialists.length} gezeigt
+            </span>
+          </div>
+          {activeSpecialists.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              Keine aktiven Specialists. Start den Daemon.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+              {activeSpecialists.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => onSelect(s.id)}
+                  style={{
+                    padding: 8, borderRadius: 8,
+                    border: s.id === selectedId ? '2px solid var(--accent-primary)' : '1px solid var(--border)',
+                    background: 'var(--bg-primary)', textAlign: 'left',
+                    cursor: 'pointer', transition: 'transform 0.15s',
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                  }}
+                >
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                    {s.id.slice(-8)}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: fitnessColor(s.fitness) }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
+                      {s.fitness.toFixed(3)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    gen {s.generation_born} · age {s.age}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Activity size={16} style={{ color: 'var(--accent-purple)' }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Generation Feed</span>
+          </div>
+          {feedReports.length === 0 ? (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              Noch keine Reports.
+            </div>
+          ) : (
+            <div style={{ maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {feedReports.map(r => (
+                <div key={r.generation} style={{
+                  padding: 8, borderRadius: 6, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)', fontSize: 11,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>Gen {r.generation}</span>
+                    <span style={{ color: fitnessColor(r.best_fitness), fontFamily: 'var(--font-mono)' }}>
+                      best={r.best_fitness.toFixed(3)}
+                    </span>
+                  </div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>
+                    {r.retired.length} retired · {r.killed.length} killed · {r.spawned.length} spawned · pop {r.population_size}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* --- Lineage viewer ---------------------------------------------- */}
+      {selectedId && (
+        <div className="card" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Dna size={16} style={{ color: 'var(--accent-primary)' }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Lineage: {selectedId}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+              {lineage.length} Knoten
+            </span>
+            <button onClick={() => { setSelectedId(null); setLineage([]) }}
+              style={{ fontSize: 11, padding: '3px 8px', border: '1px solid var(--border)',
+                borderRadius: 4, background: 'var(--bg-primary)', color: 'var(--text-muted)',
+                cursor: 'pointer' }}>
+              Schließen
+            </button>
+          </div>
+          <LineageTree nodes={lineage} focusId={selectedId} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// StatCard helper
+// ============================================================
+
+function StatCard({ label, value, icon: Icon, color }: {
+  label: string; value: string; icon: typeof Dna; color: string
+}) {
+  return (
+    <div className="card" style={{ padding: 14, textAlign: 'center' }}>
+      <Icon size={16} style={{ color, marginBottom: 4 }} />
+      <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: 'var(--font-mono)' }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
     </div>
   )
 }

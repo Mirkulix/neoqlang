@@ -115,7 +115,7 @@ impl CompetitiveLayer {
         n_classes: usize,
         neurons_per_class: usize,
     ) -> Self {
-        let n_neurons = n_classes * neurons_per_class;
+        let _n_neurons = n_classes * neurons_per_class;
 
         // Collect indices per class
         let mut class_indices: Vec<Vec<usize>> = vec![Vec::new(); n_classes];
@@ -216,7 +216,7 @@ impl CompetitiveLayer {
         labels: &[u8],
         image_dim: usize,
         n_samples: usize,
-        n_classes: usize,
+        _n_classes: usize,
         flip_rate: f32,
     ) {
         let n_neurons = self.neurons.len();
@@ -367,6 +367,58 @@ impl TernaryBrain {
         self.layer.neurons.iter().all(|n| {
             n.weights.iter().all(|&w| w == -1 || w == 0 || w == 1)
         })
+    }
+
+    /// Dump all neuron ternary weights as a flat i8 vector (for mutation / storage).
+    pub fn dump_weights_i8(&self) -> Vec<i8> {
+        let total = self.total_weights();
+        let mut out = Vec::with_capacity(total);
+        for neuron in &self.layer.neurons {
+            for &w in &neuron.weights {
+                out.push(w);
+            }
+        }
+        out
+    }
+
+    /// Overwrite all neuron weights from a flat ternary i8 vector.
+    /// Returns Err if length does not match.
+    pub fn load_weights_i8(&mut self, flat: &[i8]) -> Result<(), String> {
+        let total = self.total_weights();
+        if flat.len() != total {
+            return Err(format!(
+                "load_weights_i8: expected {} weights, got {}",
+                total,
+                flat.len()
+            ));
+        }
+        let mut off = 0usize;
+        for neuron in self.layer.neurons.iter_mut() {
+            let n = neuron.weights.len();
+            for k in 0..n {
+                let w = flat[off + k];
+                neuron.weights[k] = if w > 0 { 1 } else if w < 0 { -1 } else { 0 };
+            }
+            off += n;
+        }
+        Ok(())
+    }
+
+    /// Clone into a new TernaryBrain from already-loaded template and overwrite its weights.
+    /// This is the cheapest way to build a brain for fitness evaluation given a mutated
+    /// ternary vector: start from a statistically-initialized template and patch weights.
+    pub fn from_template_and_weights(template: &TernaryBrain, flat: &[i8]) -> Result<Self, String> {
+        let mut brain = TernaryBrain {
+            layer: CompetitiveLayer {
+                neurons: template.layer.neurons.clone(),
+                in_dim: template.layer.in_dim,
+                n_neurons: template.layer.n_neurons,
+            },
+            n_classes: template.n_classes,
+            image_dim: template.image_dim,
+        };
+        brain.load_weights_i8(flat)?;
+        Ok(brain)
     }
 }
 

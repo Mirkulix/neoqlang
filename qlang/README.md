@@ -1,242 +1,249 @@
-<![CDATA[# QLANG
+# QLANG
 
-**The programming language for AI systems.**
-
-QLANG compiles neural network models to native code, compresses them 16x, and deploys them anywhere — browser, GPU, edge devices, or cloud. One model, nine targets, zero Python.
-
-[![CI](https://github.com/Mirkulix/qland/actions/workflows/qlang-ci.yml/badge.svg)](https://github.com/Mirkulix/qland/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+A graph-based programming language and runtime for AI systems, written in Rust.
+Programs are directed acyclic graphs (DAGs) of tensor operations that can be
+interpreted, JIT-compiled via LLVM, or exchanged as signed binary messages
+between agents. QLANG is an experimental research project — not a production
+framework.
 
 ---
 
-## Why QLANG?
+## Current State (measured 2026-04-12)
 
-| Problem | QLANG Solution |
-|---------|---------------|
-| ML models are too large for edge devices | **IGQK compression: 16x smaller, same accuracy** |
-| PyTorch models only run with Python | **Compile to native code, WASM, or GPU shaders** |
-| AI agents communicate via slow text | **Binary graph protocol (3 KB vs 50 KB text)** |
-| Model deployment is complex | **One graph → 9 compilation targets** |
+All numbers below are measured on real datasets on the listed hardware.
+Source files are cited so claims can be reproduced.
+
+### Training (what works)
+
+| Method                         | Dataset       | Samples         | Result                    | Source                                    |
+|--------------------------------|---------------|-----------------|---------------------------|-------------------------------------------|
+| TernaryBrain + refine          | MNIST subset  | 5K / 1K test    | 99.6% accuracy            | `crates/qlang-runtime/tests/real_mnist_brain.rs` |
+| TernaryBrain, 15 refine rounds | MNIST full    | 60K / 10K test  | 84.6% accuracy            | `examples/demo.rs` (2026-04-12)           |
+| FFNetwork (f32), 20 epochs     | MNIST full    | 60K / 10K test  | 90.83% accuracy           | `examples/demo.rs`                        |
+| FFNetwork + QAT on GPU         | MNIST full    | 60K / 10K test  | 84.6% ternary, 30 ep, 24s | `examples/demo.rs`, RTX 2070 Super        |
+| IGQK ternary pack              | 570K weights  | —               | 16.0x size reduction      | `examples/demo.rs`                        |
+
+Hardware for GPU runs: 2x RTX 2070 Super (8 GB each), NVLink, CUDA 13.0,
+driver 580.x. Training always runs on GPU 1 (`CUDA_VISIBLE_DEVICES=1`).
+
+### JIT Performance (from README benchmark table, verified locally)
+
+| Elements  | Interpreter | LLVM JIT | Speedup |
+|-----------|-------------|----------|---------|
+| 1,024     | 10.0 µs     | 680 ns   | 14.7x   |
+| 65,536    | 703.6 µs    | 44.6 µs  | 15.8x   |
+| 1,048,576 | 21.4 ms     | 728.4 µs | 29.4x   |
+
+### Communication
+
+- QLMS binary graph protocol over TCP; HMAC-SHA256 signing
+- MessageBus with 6 agents, SSE live-stream
+- 384-dim tensor exchange between agents in 188 ms (local)
+- 14 protocol tests passing (`crates/qlang-agent`)
+
+### Test suite
+
+- `qlang-core`: 120 tests
+- `qlang-compile`: 151 tests
+- `qlang-runtime`: 550+ tests
+- `qlang-agent`: 77 tests
+- Total: ~900 unit/integration tests
+
+Counts are from the `QLANG-STATUS.md` snapshot on 2026-04-12.
+
+---
+
+## What Does NOT Work Yet
+
+Being explicit so nobody builds on false assumptions.
+
+- **Hebbian learning** on MNIST: ~10% (random). Does not learn.
+- **Random conv features** on CIFAR-10: ~10%. Useless as-is.
+- **Random ViT features** on CIFAR-10: ~12%. Useless.
+- **Hand-crafted Gabor/DCT features** on CIFAR-10: ~25%. Too weak.
+- **Spiking-MNIST**: ~10% (random). STDP loop needs fixing.
+- **Mamba tokenizer**: BPE vocab not persisted in `.qlmb`; generation emits
+  `<unk>`. Training in `mamba_train.rs` was aborted at step 50/10000.
+- **Forward-Forward on CIFAR-10**: not tested, expected around 35%.
+- **CLI training on full 60K MNIST**: too slow; batch parallelization missing.
+- **Quantum Gradient Flow**: the executor currently runs a simplified gradient
+  step, not the full IGQK flow described in the theory PDFs.
+- **Transformer backprop**: uses random perturbation, not true backpropagation.
+- **Security audit**: none. HMAC-SHA256 / Ed25519 used are standard but have
+  not been externally reviewed.
+- **Community**: single-person project, no published papers, no tutorials
+  beyond this repo.
+
+See `docs/vault/STRATEGIC_VISION.md` §5 for the full risk list.
+
+---
 
 ## Quick Start
+
+Requires Rust 1.70+ (tested with 1.93). LLVM 18 is optional.
 
 ```bash
 git clone https://github.com/Mirkulix/qland.git
 cd qland/qlang
-cargo build --release
-cargo run --release --example train_autograd
+
+# Build (interpreter only, no LLVM required)
+cargo build --release --workspace --no-default-features
+
+# Build with LLVM JIT/AOT backends
+LLVM_SYS_180_PREFIX=/opt/llvm18 cargo build --release --workspace --features llvm
+
+# Run the MNIST demo (measured numbers above come from here)
+cargo run --release --example demo
 ```
 
-Output:
-```
-Epoch  1/50: loss=1.3507, acc=67.5%
-Epoch 11/50: loss=0.5470, acc=100.0%
-Epoch 50/50: loss=0.0188, acc=100.0%
-Training time: 70ms
-IGQK Compression: 3.8x at 100% accuracy
-```
-
-## Write a Model in 10 Lines
-
-```qlang
-graph classifier {
-  input image: f32[1, 784]
-  input W1: f32[784, 128]
-  input W2: f32[128, 10]
-
-  node hidden = matmul(image, W1)
-  node activated = relu(hidden)
-  node logits = matmul(activated, W2)
-  node predictions = softmax(logits)
-  node compressed = to_ternary(W1) @proof theorem_5_2
-
-  output result = predictions
-}
-```
-
-## Deploy Anywhere
+### Ubuntu/Debian LLVM dependencies
 
 ```bash
-# Native x86-64 (29x faster than interpreter)
-qlang-cli compile model.qlang -o model.o
-
-# WebAssembly (runs in any browser)
-qlang-cli wasm model.qlang > model.wat
-
-# GPU compute shader (WebGPU)
-qlang-cli gpu model.qlang > model.wgsl
-
-# Inspect as assembly
-qlang-cli asm model.qlang
+sudo apt install llvm-18-dev libpolly-18-dev libzstd-dev
 ```
 
-## Compilation Targets
+### Run the QO server + Web UI
 
-| Target | Format | Speed | Use Case |
-|--------|--------|-------|----------|
-| **LLVM JIT** | Native x86-64 | 29x | Production servers |
-| **LLVM SIMD** | AVX2 vectors | 29x | Batch processing |
-| **AOT** | .o object file | 29x | Embed in C/C++/Rust |
-| **WebAssembly** | .wat/.wasm | 5-10x | Browser apps |
-| **GPU** | WGSL shader | 100x+ | Parallel compute |
-| **Interpreter** | Direct | 1x | Development |
-| **Binary** | .qlg (3 KB) | — | Wire format |
-| **ONNX** | JSON | — | PyTorch interop |
-| **Assembly** | .S | — | Debugging |
-
-## IGQK Model Compression
-
-QLANG implements Information-Geometric Quantum Compression:
-
-```
-Original model:    392 KB (f32 weights)
-Compressed:         25 KB (ternary: {-1, 0, +1})
-Compression:       16x
-Accuracy retained: 100%
+```bash
+QO_PORT=4747 ./target/release/qo
+# → http://localhost:4747
 ```
 
-Each compression carries a formal proof annotation linking to mathematical theorems that guarantee bounded distortion.
+### CLI
 
-## AI Integrations & Web Dashboardn
-QLANG now includes built-in integrations for major AI providers and a real-time Web Dashboard:n
-- **AI Providers**: Native clients for Anthropic (Claude), Gemini, Groq, OpenAI, and Ollama.n
-- **Web Dashboard**: A WebSocket-based real-time dashboard for streaming QLANG execution events, performance metrics, and compilation targets directly to the browser.n
-- **Multi-Agent Protocol**: Seamless TCP-based binary communication between AI agents for distributed graph execution and model compression.n
-
-## ML Features
-
-- **Autograd**: Reverse-mode automatic differentiation
-- **Optimizers**: SGD (with momentum), Adam, gradient clipping
-- **LR Schedules**: Constant, step decay, cosine annealing, linear warmup
-- **Architectures**: MLP, Transformer (attention, LayerNorm, GELU), Conv2D
-- **Training**: Cross-entropy loss, softmax, batch processing
-- **Checkpoints**: Save/load models in .qlm binary format
-
-## For AI Agents
-
-QLANG is designed as a communication protocol between AI systems:
-
-```
-AI Agent A                        AI Agent B
-    |                                 |
-    |-- Build graph (4 decisions) --> |
-    |   (not 47 text tokens)          |
-    |                                 |-- Verify types
-    |                                 |-- Optimize (6 passes)
-    |                                 |-- JIT compile
-    |                                 |-- Execute
-    | <-------- Results ------------- |
+```bash
+./target/release/qlang train --data data/mnist --epochs 10 --output model.qlbg
+./target/release/qlang info model.qlbg
+./target/release/qlang infer --model model.qlbg --input 3
+./target/release/qlang bench model.qlbg
 ```
 
-Binary protocol (QLMS): 3 KB instead of 50 KB text. No parsing errors possible.
+---
 
 ## Architecture
 
 ```
 qlang/
 ├── crates/
-│   ├── qlang-core/        # Graph, Tensor, Quantum, Ops, Types
-│   ├── qlang-compile/     # LLVM, SIMD, AOT, WASM, GPU, Parser, CLI
-│   ├── qlang-runtime/     # Executor, Autograd, Training, Transformer
-│   └── qlang-agent/       # Protocol, Packages, Distributed, Server
-├── examples/              # 11 runnable examples
-├── spec/                  # Language specification
-└── .github/workflows/     # CI/CD pipeline
+│   ├── qlang-core/        # Graph, Tensor, Binary format, Crypto, Quantum ops
+│   ├── qlang-compile/     # LLVM JIT/AOT, SIMD, WASM, WGSL, parser, CLI
+│   ├── qlang-runtime/     # Executor, autograd, training, ternary, BitNet math
+│   │   ├── forward_forward.rs   # FF ternary training
+│   │   ├── ternary_brain.rs     # Statistical init + competitive Hebbian
+│   │   ├── ternary_ops.rs       # Zero-multiply inference
+│   │   ├── bitnet_math.rs       # Absmean, RMSNorm, LoRA, annealing
+│   │   ├── gpu_train.rs         # CUDA dual-GPU training
+│   │   ├── spiking.rs           # Spiking/STDP module (not yet working)
+│   │   └── organism.rs          # Specialist-swarm orchestration
+│   └── qlang-agent/       # QLMS protocol, MessageBus, TCP bridge
+├── qo/
+│   ├── qo-embed/          # candle embeddings + ResNet-18
+│   ├── qo-server/         # Axum HTTP + WebSocket + SSE
+│   └── qo-agents/         # Specialist agents + executor
+├── frontend/              # React UI (10 tabs)
+├── examples/              # Runnable examples incl. demo.rs
+└── spec/                  # Language specification
 ```
 
-## Performance
+Design principles (from `spec/QLANG_SPEC.md`):
+1. Graph-first — AST is the program, no text parsing required.
+2. Tensor-native — base type is `Tensor<dtype>[shape]`.
+3. Verifiable — nodes can carry proof annotations linking to theorems.
+4. Composable — programs are graphs; composition is edge-wiring.
 
-```
-Benchmark: relu(a + b), release mode
+---
 
-Elements    Interpreter    LLVM JIT     Speedup
-   1,024        10.0µs     680ns        14.7x
-  65,536       703.6µs      44.6µs      15.8x
-1,048,576      21.4ms      728.4µs      29.4x
-```
+## Language Targets
 
-## CLI Tool
+| Target       | Format      | Status                                  |
+|--------------|-------------|-----------------------------------------|
+| Interpreter  | direct      | works, 1x baseline                      |
+| LLVM JIT     | native      | works, ~29x at 1M elements              |
+| LLVM AOT     | .o          | works                                   |
+| SIMD         | AVX2        | works (requires `llvm` feature)         |
+| WebAssembly  | .wat        | codegen works, browser runtime untested |
+| GPU          | WGSL        | codegen + wgpu execution works          |
+| Binary wire  | .qlg / QLMS | works, 14 protocol tests pass           |
+| ONNX         | JSON        | import/export works for MLP subset      |
 
-```bash
-qlang-cli repl                    # Interactive REPL
-qlang-cli parse model.qlang      # Parse and validate
-qlang-cli info model.qlg.json    # Show graph structure
-qlang-cli verify model.qlg.json  # Check constraints
-qlang-cli optimize model.qlg.json # Run 6 optimization passes
-qlang-cli jit model.qlg.json     # JIT compile and execute
-qlang-cli compile model.qlg.json -o out.o  # AOT compile
-qlang-cli dot model.qlg.json     # Graphviz visualization
-qlang-cli stats model.qlg.json   # Graph statistics
-qlang-cli schedule model.qlg.json # Execution plan
-```
+---
 
-## Requirements
+## Comparison to Alternatives
 
-- **Rust 1.70+** (tested with 1.93)
-- **LLVM 18** (optional, for JIT/AOT compilation)
-- Works without LLVM in interpreter-only mode
+Source: `docs/vault/STRATEGIC_VISION.md` §5.
 
-### Cargo Features
+| Feature                      | PyTorch   | JAX      | ONNX    | HuggingFace | LangChain | QLANG   |
+|------------------------------|-----------|----------|---------|-------------|-----------|---------|
+| Community                    | 100K+     | 20K+     | 50K+    | 200K+       | 80K+      | <10     |
+| Docs                         | excellent | good     | ok      | excellent   | good      | thin    |
+| Tutorials                    | thousands | hundreds | many    | thousands   | many      | none    |
+| Published papers             | thousands | hundreds | many    | many        | ok        | 0       |
+| Cloud integrations           | all       | all      | many    | many        | many      | none    |
+| Large models (>1B params)    | yes       | yes      | yes     | yes         | via API   | no      |
+| Signed binary graph protocol | no        | no       | partial | no          | no        | yes     |
+| Ternary + IGQK compression   | no        | no       | no      | no          | no        | yes     |
+| Graph-native language        | no        | partial  | yes     | no          | no        | yes     |
 
-- `llvm`: aktiviert LLVM‑basierte JIT/AOT‑Backends
-- `gpu`: aktiviert GPU‑Codepfade (WGSL Shader)
-- `mlx`: aktiviert Apple MLX‑spezifische Pfade
+QLANG is technically differentiated (graph-as-language, signed wire format,
+ternary compression, 3-tier execution in one codebase), but ecosystem-wise it
+is at hobby scale.
 
-Beispiele:
-```bash
-# Ohne LLVM (nur Interpreter)
-cargo build --workspace --no-default-features
+---
 
-# Mit LLVM
-cargo build --workspace --features llvm
+## Roadmap
 
-# Mit GPU
-cargo build --workspace --features gpu
-```
+Full version in `docs/vault/STRATEGIC_VISION.md` §4.
 
-### Networking (Ollama)
+### Short-term (2 weeks) — P0
+- **G1** — MNIST ≥95% end-to-end on the 60K/10K split, reproducible from Web UI,
+  ternary-compressed, `.qlm` under 1 MB.
+- **G2** — Fix Mamba tokenizer: persist BPE vocab in `.qlmb`, finish a training
+  run, PPL <200 on WikiText-2 valid.
+- **G3** — Spiking-MNIST ≥85% (currently 10%). Fix STDP loop, add surrogate
+  gradient fallback.
 
-Environment:
-- `QLANG_OLLAMA_HOST` (default `127.0.0.1`)
-- `QLANG_OLLAMA_PORT` (default `11434`)
+### Mid-term (2 months) — P1
+- **G4** — QLMS interop with 2+ external LLMs via a signing proxy.
+- **G5** — Continuous evolution daemon (24/7 swarm, persisted generations).
+- **G6** — Implement real quantum gradient flow (Padé matrix exponential,
+  low-rank density matrices).
 
-Für HTTPS‑Termination empfiehlt sich ein Reverse‑Proxy (z. B. Nginx) vor einer lokalen Ollama‑Instanz. Leite `/api/*` nach `http://127.0.0.1:11434` weiter:
+### Long-term (6+ months) — P2
+- **G7** — Signed model hub with Ed25519 auth.
+- **G8** — FPGA / neuromorphic backend (Verilog generator for ternary MLP).
+- **G9** — Self-improving organism (agent writes QLANG graphs to improve
+  itself).
 
-```nginx
-server {
-  listen 443 ssl;
-  server_name your.domain;
-  ssl_certificate     /etc/ssl/certs/fullchain.pem;
-  ssl_certificate_key /etc/ssl/private/privkey.pem;
+---
 
-  location /api/ {
-    proxy_pass http://127.0.0.1:11434;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-  }
-}
-```
+## Contributing
 
-### Install on Ubuntu/Debian
-```bash
-sudo apt install llvm-18-dev libpolly-18-dev libzstd-dev
-```
+This is currently a single-maintainer research project. Bus factor = 1.
+Contributions that help most:
 
-## Stats
+1. Reproducing the measured numbers above on different hardware.
+2. Fixing listed "does not work" items (especially spiking-MNIST and
+   Mamba tokenizer).
+3. Writing tutorials or minimal examples for the `spec/` language features.
+4. External review of the crypto code (`qlang-core::crypto`).
+5. Independent evaluation of the IGQK theory (`docs/` PDFs).
 
-- **248 tests** passing
-- **47 modules** across 4 crates
-- **~20,000 lines** of Rust
-- **MIT licensed**
+Before submitting code:
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace --release` (pass `--features llvm` if LLVM is set up)
+
+No CLA. Keep PRs small and focused.
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT — see `LICENSE`.
 
 ## Author
 
 Aleksandar Barisic ([@Mirkulix](https://github.com/Mirkulix))
 
-Built with IGQK theory (Information-Geometric Quantum Compression).
-]]>
+Theory references: the IGQK (Information-Geometric Quantum Compression) PDFs
+in the parent directory. Not peer-reviewed.

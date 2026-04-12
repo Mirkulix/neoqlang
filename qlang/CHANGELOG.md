@@ -1,44 +1,78 @@
 # Changelog
 
-All notable changes to QLANG will be documented in this file.
+All notable changes to QLANG are documented in this file.
+Dates use ISO format. Measured numbers cite their source file.
 
-## [0.1.0] - 2026-04-02
+## [Unreleased] — 2026-04-12
 
 ### Added
-- **Core Language**: Graph-based program representation (DAG), 36+ operations
-- **Type System**: Tensor types (f32, f64, i32, ternary, etc.) with shape inference
-- **Parser**: .qlang text syntax with proof annotations (@proof theorem_5_2)
-- **Compiler**: LLVM JIT compilation (29x faster than interpreter)
-- **SIMD**: AVX2 vectorization with aligned memory allocator
-- **AOT**: Ahead-of-time compilation to native object files (.o)
-- **WebAssembly**: WAT code generation for browser deployment
-- **GPU**: WGSL compute shader generation (WebGPU)
-- **Runtime**: Graph executor with 20+ tensor operations
-- **Autograd**: Reverse-mode automatic differentiation (backpropagation)
-- **Training**: MLP training with SGD, Adam optimizer, gradient clipping
-- **Transformer**: Multi-head attention, LayerNorm, GELU, positional encoding
-- **Conv2D**: 2D convolution, max pooling, causal attention masking
-- **IGQK**: Ternary compression (4-16x), quantum state operations
-- **ONNX**: Import/export for PyTorch/TensorFlow interoperability
-- **Agent Protocol**: QLMS binary protocol for AI-to-AI communication
-- **Network Server**: TCP-based graph exchange and remote execution
-- **Package System**: Registry with standard library
-- **Graph Diff**: Version control for computation graphs
-- **Distributed Training**: Data-parallel training with gradient aggregation
-- **CLI**: Interactive REPL, parser, optimizer, visualizer, profiler
-- **LSP**: Language server foundation for IDE integration
-- **CI/CD**: GitHub Actions pipeline
-- **Optimizer**: 6 passes (DCE, constant folding, CSE, op fusion, identity elimination)
-- **Diagnostics**: Deep graph validation with error recovery
-- **Scheduler**: Wavefront parallelism detection and memory planning
-- **Benchmarks**: Comprehensive performance measurement suite
-- **Checkpoints**: Model save/load in .qlm binary format
-- **Visualization**: Graphviz DOT and ASCII terminal output
-- **Self-hosting**: Compiler expressed as QLANG graph (foundation)
+- **Honest status audit** (`QLANG-STATUS.md`, commit `2386657`). All training
+  numbers re-measured on real MNIST 60K/10K; synthetic-data claims removed.
+  Explicit list of what does not work yet (Hebbian, random conv features,
+  spiking-MNIST, Mamba tokenizer, full CIFAR-10 pipeline).
+- **GPU QAT + Master Agent + MNIST+IGQK demo** (commit `467f1e0`).
+  Forward-Forward with Quantization-Aware Training on GPU reaches 84.6%
+  ternary accuracy on MNIST full (10K test set, 30 epochs, 24 s on a single
+  RTX 2070 Super). Master agent orchestrates the demo pipeline end-to-end.
+  Source: `crates/qlang-runtime/src/gpu_train.rs`, `examples/demo.rs`.
+- **Dual-GPU CUDA training + spiking module + live dashboards**
+  (commit `b7f2cf2`). Training pipeline uses `CUDA_VISIBLE_DEVICES=1` to keep
+  GPU 0 free for display (GPU 0 training causes Xid 109). Spiking module
+  scaffolding added (`crates/qlang-runtime/src/spiking.rs`) — currently at
+  random-chance accuracy, included for iteration. New live dashboards:
+  `frontend/src/GpuTrainingView.tsx`, `frontend/src/SpikingView.tsx`.
 
-### Performance
-- JIT compilation: 29x faster than interpreter (1M elements)
-- Training: 100% accuracy on toy dataset in 70ms
-- MNIST: 784->128->10 MLP converges in 15.9s
-- IGQK compression: 4x-16x with accuracy retention
-- Binary graph format: 3.2 KB for complete MNIST model
+### Known issues
+- Hebbian learning: ~10% on MNIST (random).
+- Spiking-MNIST: ~10% (random). STDP loop and rate-coding need fixing.
+- Random conv / ViT features on CIFAR-10: 10–12%.
+- Mamba training aborted at step 50/10000; tokenizer vocab missing from
+  `.qlmb` checkpoints.
+- CLI training on full 60K MNIST is too slow; batch parallelization missing.
+- Transformer uses random-perturbation updates instead of true backprop.
+- Quantum gradient flow in the executor is a simplified gradient step, not
+  the full IGQK flow.
+
+## [0.1.0] — 2026-04-02
+
+### Added
+- **Core language**: graph-based DAG representation, 36+ operations.
+- **Type system**: `Tensor<dtype>[shape]` with shape inference
+  (f32, f64, i32, ternary, etc.).
+- **Parser**: `.qlang` text syntax with `@proof theorem_*` annotations.
+- **Compiler**: LLVM JIT (measured 29.4x over interpreter at 1M elements,
+  release mode).
+- **SIMD**: AVX2 vectorization with aligned allocator.
+- **AOT**: compilation to native `.o` object files.
+- **WebAssembly**: WAT codegen for browser deployment.
+- **GPU**: WGSL compute shader generation (WebGPU / wgpu).
+- **Runtime**: graph executor with 20+ tensor operations.
+- **Autograd**: reverse-mode automatic differentiation.
+- **Training**: MLP with SGD, Adam, gradient clipping.
+- **Transformer**: multi-head attention, LayerNorm, GELU, positional encoding.
+- **Conv2D**: 2D convolution, max pooling, causal attention masking.
+- **IGQK**: ternary compression (4–16x), quantum-state operations.
+- **ONNX**: import/export for PyTorch/TensorFlow interop (MLP subset).
+- **Agent protocol**: QLMS binary format for AI-to-AI exchange.
+- **Network server**: TCP-based graph exchange and remote execution.
+- **Package system**: local registry with a small standard library.
+- **Graph diff**: version-control primitives for graphs.
+- **Distributed training**: data-parallel with gradient aggregation.
+- **CLI**: REPL, parser, optimizer, visualizer, profiler.
+- **LSP**: language-server foundation for IDE integration.
+- **CI/CD**: GitHub Actions pipeline.
+- **Optimizer**: 6 passes (DCE, constant folding, CSE, op fusion,
+  identity elimination, and scheduling).
+- **Diagnostics**: deep graph validation with error recovery.
+- **Scheduler**: wavefront parallelism detection and memory planning.
+- **Benchmarks**: performance measurement suite.
+- **Checkpoints**: `.qlm` binary model save/load.
+- **Visualization**: Graphviz DOT + ASCII terminal output.
+- **Self-hosting**: compiler expressed as QLANG graph (foundation).
+
+### Performance (measured 2026-04-02)
+- JIT compilation: 29.4x over interpreter at 1M elements.
+- Training: 100% accuracy on toy dataset in 70 ms.
+- MNIST 784→128→10 MLP: converges in 15.9 s.
+- IGQK compression: 4x–16x with accuracy retention on the toy set.
+- Binary graph format: 3.2 KB for the complete MNIST model.

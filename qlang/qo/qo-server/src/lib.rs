@@ -34,6 +34,10 @@ pub struct AppState {
     pub message_bus: Arc<MessageBus>,
     /// GPU training state — tracks running training job for SSE streaming.
     pub gpu_training: Arc<routes::gpu_training::GpuTrainingState>,
+    /// Evolution daemon — lazily initialized on first /api/evolution/start call.
+    pub evolution_daemon: Arc<
+        Mutex<Option<Arc<qlang_runtime::evolution::daemon::EvolutionDaemon>>>,
+    >,
 }
 
 pub struct QoConfig {
@@ -199,6 +203,7 @@ pub async fn build_app(
         memory: Mutex::new(memory_ctx),
         message_bus: message_bus.clone(),
         gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
+        evolution_daemon: Arc::new(Mutex::new(None)),
     });
 
     // Register all QO agents on the message bus.
@@ -291,6 +296,13 @@ pub async fn build_app(
         .route("/api/spiking/train", post(routes::spiking::train_spiking))
         .route("/api/spiking/status", get(routes::spiking::spiking_status))
         .route("/api/demo/mnist-igqk", post(routes::demo::start_mnist_igqk_demo))
+        .route("/api/evolution/start", post(routes::evolution_daemon::start))
+        .route("/api/evolution/stop", post(routes::evolution_daemon::stop))
+        .route("/api/evolution/status", get(routes::evolution_daemon::status))
+        .route("/api/evolution/history", get(routes::evolution_daemon::history))
+        .route("/api/evolution/specialists", get(routes::evolution_daemon::specialists))
+        .route("/api/evolution/lineage/{id}", get(routes::evolution_daemon::lineage))
+        .route("/api/evolution/stream", get(routes::evolution_daemon::stream))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 
