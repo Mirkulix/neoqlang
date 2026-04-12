@@ -11,7 +11,7 @@
 
 use super::fitness::FitnessTracker;
 use super::lifecycle::{LifecycleManager, LifecyclePolicy, LifecycleStatus, SelectionReport};
-use super::mutation::{mutate_ternary_i8, MutationConfig};
+use super::mutation::{crossover_ternary_i8, mutate_ternary_i8, MutationConfig};
 use crate::mnist::MnistData;
 use crate::ternary_brain::TernaryBrain;
 
@@ -249,13 +249,26 @@ impl RealEvolutionDaemon {
         }
 
         // 2. SELECT TOP PARENTS -----------------------------------------------
+        // Take top 20% by fitness (at least 2 if possible) to form the crossover
+        // pool. `top_n(5)` keeps the classical "top 5" parents for the primary
+        // mutation path so existing behavior is preserved.
         let top = {
             let ft = self.fitness.read().map_err(|e| format!("fit read: {e}"))?;
             ft.top_n(5)
         };
         let top_parent_ids: Vec<String> = top.iter().map(|(id, _)| id.clone()).collect();
 
-        // 3. MUTATION / OFFSPRING ---------------------------------------------
+        let crossover_pool: Vec<String> = {
+            let active_n = specs_snapshot.len();
+            let pool_size = ((active_n as f32 * 0.2).ceil() as usize).max(2);
+            let ft = self.fitness.read().map_err(|e| format!("fit read: {e}"))?;
+            ft.top_n(pool_size)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        };
+
+        // 3. MUTATION / CROSSOVER / OFFSPRING ---------------------------------
         let mutations_spawned = if !top_parent_ids.is_empty() {
             let per_parent =
                 (self.config.mutations_per_generation / top_parent_ids.len().max(1)).max(1);
@@ -282,17 +295,64 @@ impl RealEvolutionDaemon {
                         .wrapping_add((pi as u64) * 1_000_003)
                         .wrapping_add(k as u64)
                         ^ self.config.mutation_config.seed;
-                    let cfg = MutationConfig {
-                        seed,
-                        ..self.config.mutation_config.clone()
+
+                    // Decide reproduction strategy: 70% single-parent mutation,
+                    // 30% two-parent crossover. The draw is derived from `seed`
+                    // so a run is fully reproducible.
+                    let draw = ((seed.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as u32)
+                        as f32
+                        / (u32::MAX as f32);
+                    let use_crossover = draw < 0.30 && crossover_pool.len() >= 2;
+
+                    let (child, parent_ids) = if use_crossover {
+                        // Pick a second distinct parent from the crossover pool.
+                        let idx = ((seed >> 11) as usize) % crossover_pool.len();
+                        let mut partner_id = crossover_pool[idx].clone();
+                        if partner_id == *parent_id {
+                            let alt = (idx + 1) % crossover_pool.len();
+                            partner_id = crossover_pool[alt].clone();
+                        }
+                        let partner_weights = {
+                            let specs = self
+                                .specialists
+                                .read()
+                                .map_err(|e| format!("specs read: {e}"))?;
+                            specs.get(&partner_id).cloned()
+                        };
+                        match partner_weights {
+                            Some(pw) if partner_id != *parent_id => {
+                                let cfg = MutationConfig {
+                                    seed,
+                                    ..self.config.mutation_config.clone()
+                                };
+                                let c = crossover_ternary_i8(&parent_weights, &pw, &cfg);
+                                (c, vec![parent_id.clone(), partner_id])
+                            }
+                            _ => {
+                                // Fallback to mutation when no distinct partner.
+                                let cfg = MutationConfig {
+                                    seed,
+                                    ..self.config.mutation_config.clone()
+                                };
+                                let mut c = parent_weights.clone();
+                                mutate_ternary_i8(&mut c, &cfg);
+                                (c, vec![parent_id.clone()])
+                            }
+                        }
+                    } else {
+                        let cfg = MutationConfig {
+                            seed,
+                            ..self.config.mutation_config.clone()
+                        };
+                        let mut c = parent_weights.clone();
+                        mutate_ternary_i8(&mut c, &cfg);
+                        (c, vec![parent_id.clone()])
                     };
-                    let mut child = parent_weights.clone();
-                    mutate_ternary_i8(&mut child, &cfg);
 
                     let child_id = {
                         let mut lc =
                             self.lifecycle.write().map_err(|e| format!("lc write: {e}"))?;
-                        lc.birth(vec![parent_id.clone()])
+                        lc.birth(parent_ids.clone())
                     };
                     self.specialists
                         .write()
@@ -306,7 +366,7 @@ impl RealEvolutionDaemon {
                             .current_generation();
                         let mut ft =
                             self.fitness.write().map_err(|e| format!("fit write: {e}"))?;
-                        ft.register(child_id, gen_now, Some(parent_id.clone()));
+                        ft.register(child_id, gen_now, parent_ids.first().cloned());
                     }
                     spawned += 1;
                 }
@@ -658,6 +718,38 @@ mod tests {
             elapsed
         );
         assert!(!daemon.is_running());
+    }
+
+    #[test]
+    fn test_crossover_creates_child_with_two_parents() {
+        // Spawn plenty of offspring so the 30% crossover path is hit.
+        let (daemon, data) = build_daemon(40);
+        let mut found_two_parent_child = false;
+        for _ in 0..5 {
+            daemon
+                .step_once(&data.test_images, &data.test_labels, data.n_test)
+                .expect("step_once");
+            let lc = daemon.lifecycle.read().expect("lc read");
+            for id in lc.active_ids() {
+                if let Some(meta) = lc.get(&id) {
+                    if meta.parent_ids.len() == 2 {
+                        assert_ne!(
+                            meta.parent_ids[0], meta.parent_ids[1],
+                            "crossover parents must be distinct"
+                        );
+                        found_two_parent_child = true;
+                    }
+                }
+            }
+            drop(lc);
+            if found_two_parent_child {
+                break;
+            }
+        }
+        assert!(
+            found_two_parent_child,
+            "no crossover child (parent_ids.len() == 2) produced over 5 generations"
+        );
     }
 
     #[test]
