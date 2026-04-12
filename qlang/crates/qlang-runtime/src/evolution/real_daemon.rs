@@ -522,6 +522,22 @@ impl RealEvolutionDaemon {
         self.specialists.read().map(|s| s.len()).unwrap_or(0)
     }
 
+    /// Return a clone of the raw ternary weight vector for `id`, if present.
+    /// Used by CLI tools and checkpoint exports (T061).
+    pub fn get_weights(&self, id: &str) -> Option<Vec<i8>> {
+        self.specialists.read().ok()?.get(id).cloned()
+    }
+
+    /// Return the template brain's image dimension (for export headers).
+    pub fn template_image_dim(&self) -> Option<usize> {
+        self.template.read().ok()?.as_ref().map(|t| t.image_dim)
+    }
+
+    /// Return the template brain's class count (for export headers).
+    pub fn template_n_classes(&self) -> Option<usize> {
+        self.template.read().ok()?.as_ref().map(|t| t.n_classes)
+    }
+
     /// Build a snapshot of every specialist (active/retired/dead) with its
     /// latest fitness, for HTTP consumption.
     pub fn snapshot_specialists(&self) -> Vec<SpecialistSnapshot> {
