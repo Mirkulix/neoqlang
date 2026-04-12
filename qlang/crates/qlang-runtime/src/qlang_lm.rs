@@ -55,6 +55,22 @@ impl Tokenizer {
         Self { word2id, id2word, vocab_size }
     }
 
+    /// Build a tokenizer from an exact, ordered vocabulary list.
+    ///
+    /// Unlike `from_text`, this preserves the provided ID assignment so a
+    /// serialized vocabulary (e.g. embedded in a QLMB checkpoint) can be
+    /// reconstructed byte-for-byte. The first two entries are expected to be
+    /// `<unk>` and `<pad>` (IDs 0 and 1) but this is not enforced — callers
+    /// must supply a valid vocab.
+    pub fn from_vocab(vocab: Vec<String>) -> Self {
+        let mut word2id = HashMap::with_capacity(vocab.len());
+        for (i, w) in vocab.iter().enumerate() {
+            word2id.insert(w.clone(), i);
+        }
+        let vocab_size = vocab.len();
+        Self { word2id, id2word: vocab, vocab_size }
+    }
+
     /// Tokenize text → token IDs.
     pub fn encode(&self, text: &str) -> Vec<usize> {
         text.split_whitespace()

@@ -25,7 +25,10 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10usize);
-    let batch_size = 100usize;
+    let batch_size = std::env::var("BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100usize);
 
     println!(
         "[bench] n_train={} n_test={} epochs={} batch={}",

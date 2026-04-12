@@ -345,6 +345,15 @@ pub fn train_cpu_with_progress(
     Ok(())
 }
 
+/// Public wrapper around [`save_weights`] for integration tests (T011).
+///
+/// Keeps the internal API unchanged while letting tests assert the QLMB
+/// binary format (including the embedded tokenizer vocab) without
+/// duplicating serialization logic.
+pub fn save_weights_for_test(lm: &TrainableLM, path: &str) {
+    save_weights(lm, path);
+}
+
 fn save_weights(lm: &TrainableLM, path: &str) {
     let mut data = Vec::new();
     data.extend_from_slice(&[0x51, 0x4C, 0x4D, 0x42]); // "QLMB" = QLANG LM Binary
@@ -364,6 +373,20 @@ fn save_weights(lm: &TrainableLM, path: &str) {
         write_f32_vec(&mut data, &layer.w_out);
         write_f32_vec(&mut data, &layer.b_h);
         write_f32_vec(&mut data, &layer.b_gate);
+    }
+
+    // Vocab section: "VOCB" | u32 len | [u16 word_len | bytes]*
+    // Embedding the exact tokenizer vocab ensures reloads use identical
+    // token IDs — avoids the <unk> drift caused by re-deriving vocab from
+    // reference text on load (T011).
+    data.extend_from_slice(&[0x56, 0x4F, 0x43, 0x42]); // "VOCB"
+    data.extend_from_slice(&(lm.tokenizer.id2word.len() as u32).to_le_bytes());
+    for word in &lm.tokenizer.id2word {
+        let bytes = word.as_bytes();
+        // Clamp at u16::MAX for safety — word-level tokens are always short.
+        let len = bytes.len().min(u16::MAX as usize) as u16;
+        data.extend_from_slice(&len.to_le_bytes());
+        data.extend_from_slice(&bytes[..len as usize]);
     }
 
     let _ = std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap_or(std::path::Path::new(".")));

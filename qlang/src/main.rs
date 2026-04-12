@@ -136,7 +136,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ollama_model: std::env::var("OLLAMA_MODEL")
             .ok()
             .or_else(|| Some("orbit-companion-ft-q4".to_string())),
-        data_dir: PathBuf::from("data"),
+        data_dir: std::env::var("QO_DATA_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data")),
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir,
         auth_token: std::env::var("QO_AUTH_TOKEN").ok(),

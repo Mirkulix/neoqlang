@@ -524,8 +524,36 @@ pub fn load_mamba_model(path: &str, text_for_tokenizer: &str) -> Result<Trainabl
         });
     }
 
-    let text = if text_for_tokenizer.is_empty() { "a b c d" } else { text_for_tokenizer };
-    let tokenizer = crate::qlang_lm::Tokenizer::from_text(text, vocab_size);
+    // Optional vocab section: "VOCB" | u32 count | [u16 word_len | bytes]*
+    // If present, reconstruct the tokenizer from the exact embedded vocab so
+    // token IDs match training exactly (T011). Otherwise fall back to the
+    // legacy behaviour of rebuilding from reference text.
+    let tokenizer = if pos + 4 <= data.len() && &data[pos..pos + 4] == b"VOCB" {
+        pos += 4;
+        let count = read_u32(&mut pos, &data)? as usize;
+        let mut vocab = Vec::with_capacity(count);
+        for _ in 0..count {
+            if pos + 2 > data.len() {
+                return Err("Unexpected EOF reading vocab word length".into());
+            }
+            let word_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+            pos += 2;
+            if pos + word_len > data.len() {
+                return Err(format!(
+                    "Unexpected EOF reading vocab word of {} bytes at offset {}",
+                    word_len, pos
+                ));
+            }
+            let word = String::from_utf8(data[pos..pos + word_len].to_vec())
+                .map_err(|e| format!("Invalid UTF-8 in vocab: {}", e))?;
+            pos += word_len;
+            vocab.push(word);
+        }
+        crate::qlang_lm::Tokenizer::from_vocab(vocab)
+    } else {
+        let text = if text_for_tokenizer.is_empty() { "a b c d" } else { text_for_tokenizer };
+        crate::qlang_lm::Tokenizer::from_text(text, vocab_size)
+    };
 
     Ok(TrainableLM::from_weights(embedding, output_head, layers, d_model, vocab_size, tokenizer))
 }

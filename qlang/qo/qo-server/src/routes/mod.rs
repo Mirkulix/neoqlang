@@ -19,3 +19,4 @@ pub mod train_monitor;
 pub mod training;
 pub mod simulation;
 pub mod spiking;
+pub mod qlms_demo;

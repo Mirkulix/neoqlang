@@ -146,7 +146,7 @@ pub fn hash_graph(graph: &Graph) -> [u8; 32] {
 // ---------------------------------------------------------------------------
 
 /// HMAC-SHA256: keyed hash for signing.
-fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
+pub fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
     // HMAC(K, m) = SHA-256((K ^ opad) || SHA-256((K ^ ipad) || m))
     let mut ipad = [0x36u8; 64];
     let mut opad = [0x5cu8; 64];
