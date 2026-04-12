@@ -34,9 +34,16 @@ pub struct AppState {
     pub message_bus: Arc<MessageBus>,
     /// GPU training state — tracks running training job for SSE streaming.
     pub gpu_training: Arc<routes::gpu_training::GpuTrainingState>,
-    /// Evolution daemon — lazily initialized on first /api/evolution/start call.
+    /// Evolution daemon (legacy stub — simulated fitness drift).
+    /// Still kept for backwards compatibility with any CLI/tests that pin
+    /// the old behavior via `use_real_daemon=false`.
     pub evolution_daemon: Arc<
         Mutex<Option<Arc<qlang_runtime::evolution::daemon::EvolutionDaemon>>>,
+    >,
+    /// REAL evolution daemon — trains ternary MNIST specialists. Default
+    /// backend for `/api/evolution/*` endpoints.
+    pub real_evolution_daemon: Arc<
+        Mutex<Option<Arc<qlang_runtime::evolution::real_daemon::RealEvolutionDaemon>>>,
     >,
 }
 
@@ -204,6 +211,7 @@ pub async fn build_app(
         message_bus: message_bus.clone(),
         gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
         evolution_daemon: Arc::new(Mutex::new(None)),
+        real_evolution_daemon: Arc::new(Mutex::new(None)),
     });
 
     // Register all QO agents on the message bus.

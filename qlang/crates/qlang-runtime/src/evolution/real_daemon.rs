@@ -10,7 +10,7 @@
 //! generation-interval sleep so shutdown latency stays well under five seconds.
 
 use super::fitness::FitnessTracker;
-use super::lifecycle::{LifecycleManager, LifecyclePolicy, SelectionReport};
+use super::lifecycle::{LifecycleManager, LifecyclePolicy, LifecycleStatus, SelectionReport};
 use super::mutation::{mutate_ternary_i8, MutationConfig};
 use crate::mnist::MnistData;
 use crate::ternary_brain::TernaryBrain;
@@ -74,6 +74,19 @@ pub struct GenerationReport {
     pub best_fitness: f32,
     pub avg_fitness: f32,
     pub elapsed_ms: u64,
+}
+
+/// Per-specialist snapshot for HTTP consumers (shape mirrors the stub
+/// daemon's `SpecialistInfo` so existing UIs keep working).
+#[derive(Debug, Clone, Serialize)]
+pub struct SpecialistSnapshot {
+    pub id: String,
+    pub generation_born: u32,
+    pub parent_id: Option<String>,
+    pub children: Vec<String>,
+    pub fitness: f32,
+    pub status: String,
+    pub mutations: u32,
 }
 
 /// Cheap status snapshot for HTTP / CLI.
@@ -447,6 +460,108 @@ impl RealEvolutionDaemon {
 
     pub fn population_size(&self) -> usize {
         self.specialists.read().map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Build a snapshot of every specialist (active/retired/dead) with its
+    /// latest fitness, for HTTP consumption.
+    pub fn snapshot_specialists(&self) -> Vec<SpecialistSnapshot> {
+        let lc = match self.lifecycle.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let ft = match self.fitness.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        // Grab all ids by union of active + any non-active we can see via registry.
+        // LifecycleManager doesn't expose iter(), so we approximate by active ids +
+        // any id the fitness tracker knows about.
+        let mut out: Vec<SpecialistSnapshot> = Vec::new();
+        let active: std::collections::HashSet<String> =
+            lc.active_ids().into_iter().collect();
+
+        // Walk fitness tracker records (the daemon registers every id it creates
+        // with the fitness tracker, so this covers active/retired/dead uniformly).
+        // `FitnessTracker` doesn't expose a direct iter either, so we rely on
+        // lifecycle::get() for per-id lookups — for any id we can find via
+        // fitness tracker.
+        // Build id list from fitness history snapshots would be lossy; simpler:
+        // traverse lifecycle via lineage on active roots + fitness records.
+        //
+        // Since neither struct provides `iter_records()`, we synthesise the list
+        // from active_ids + their full lineage (covers parents + children).
+        let mut id_set: std::collections::HashSet<String> = active.clone();
+        for id in &active {
+            for lineage_id in lc.lineage(id) {
+                id_set.insert(lineage_id);
+            }
+        }
+        for id in id_set {
+            let meta = match lc.get(&id) {
+                Some(m) => m,
+                None => continue,
+            };
+            let (fitness, mutations) = match ft.get(&id) {
+                Some(rec) => (rec.fitness_score(), rec.mutation_count),
+                None => (0.0, 0),
+            };
+            let status = match meta.status {
+                LifecycleStatus::Active => "active",
+                LifecycleStatus::Retired => "retired",
+                LifecycleStatus::Dead => "dead",
+            };
+            out.push(SpecialistSnapshot {
+                id: meta.id.clone(),
+                generation_born: meta.generation,
+                parent_id: meta.parent_ids.first().cloned(),
+                children: meta.children_ids.clone(),
+                fitness,
+                status: status.into(),
+                mutations,
+            });
+        }
+        out.sort_by(|a, b| {
+            b.fitness
+                .partial_cmp(&a.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        out
+    }
+
+    /// Return the full lineage (ancestors + descendants + self) for `id`.
+    pub fn lineage(&self, id: &str) -> Vec<SpecialistSnapshot> {
+        let lc = match self.lifecycle.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let ft = match self.fitness.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        lc.lineage(id)
+            .into_iter()
+            .filter_map(|sid| {
+                let meta = lc.get(&sid)?;
+                let (fitness, mutations) = match ft.get(&sid) {
+                    Some(rec) => (rec.fitness_score(), rec.mutation_count),
+                    None => (0.0, 0),
+                };
+                let status = match meta.status {
+                    LifecycleStatus::Active => "active",
+                    LifecycleStatus::Retired => "retired",
+                    LifecycleStatus::Dead => "dead",
+                };
+                Some(SpecialistSnapshot {
+                    id: meta.id.clone(),
+                    generation_born: meta.generation,
+                    parent_id: meta.parent_ids.first().cloned(),
+                    children: meta.children_ids.clone(),
+                    fitness,
+                    status: status.into(),
+                    mutations,
+                })
+            })
+            .collect()
     }
 
     pub fn status(&self) -> DaemonStatus {

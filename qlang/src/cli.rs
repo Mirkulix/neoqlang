@@ -8,14 +8,13 @@
 //!   qlang info   model.qlbg
 //!   qlang bench  model.qlbg
 
-use std::path::PathBuf;
 use std::time::Instant;
 
 use qlang_core::binary;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
-use qlang_core::tensor::{Dtype, Shape, TensorData, TensorType};
-use qlang_runtime::forward_forward::{FFLayer, FFNetwork};
+use qlang_core::tensor::{Dtype, Shape, TensorType};
+use qlang_runtime::forward_forward::FFNetwork;
 use qlang_runtime::mnist::MnistData;
 use qlang_runtime::ternary_ops;
 
@@ -59,6 +58,7 @@ struct ModelMetadata {
 
 impl TernaryModel {
     /// Save to file (QLBG header + bincode payload).
+    #[allow(dead_code)] // Save API retained for programmatic use
     fn save(&self, path: &str) -> Result<(), String> {
         // Build a QLANG graph describing the architecture
         let mut graph = Graph::new(format!("ternary_model_{}", self.n_classes));
@@ -147,6 +147,7 @@ impl TernaryModel {
     }
 
     /// Create from a trained FFNetwork.
+    #[allow(dead_code)] // Constructor retained for programmatic use
     fn from_network(net: &FFNetwork, meta: ModelMetadata) -> Self {
         let mut layers = Vec::new();
         let mut packed_weights = Vec::new();
