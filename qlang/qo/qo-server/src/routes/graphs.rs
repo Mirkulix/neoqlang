@@ -78,3 +78,31 @@ pub async fn get_graph(
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Graph {} not found", id)))?;
     Ok(Json(graph))
 }
+
+#[derive(Serialize)]
+pub struct StoreGraphResponse {
+    pub id: u64,
+    pub message: String,
+}
+
+/// POST /api/graphs — store a new graph
+pub async fn store_graph(
+    State(state): State<Arc<AppState>>,
+    Json(mut graph): Json<StoredGraph>,
+) -> Result<Json<StoreGraphResponse>, (StatusCode, String)> {
+    // Ensure timestamp is set
+    if graph.timestamp == 0 {
+        graph.timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+    }
+    let id = state
+        .graph_store
+        .store(&graph)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(StoreGraphResponse {
+        id,
+        message: format!("Graph '{}' gespeichert ({} nodes, {} edges)", graph.title, graph.nodes.len(), graph.edges.len()),
+    }))
+}

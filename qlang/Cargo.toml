@@ -85,6 +85,7 @@ path = "src/gpu_train_bin.rs"
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]
 gpu = ["qlang-runtime/gpu"]
+cuda = ["qlang-runtime/cuda"]
 mlx = ["qlang-runtime/mlx"]
 
 [[example]]

@@ -1,0 +1,310 @@
+// ═══════════════════════════════════════════════════════════════════
+//  QLANG Session Graph — 2026-04-11
+//  Everything that happened today, encoded as a QLANG computation graph.
+//  This graph IS the documentation. The graph IS the truth.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Phase 1: Graphify — Repo als Knowledge Graph ─────────────────
+
+graph session_2026_04_11 {
+    metadata {
+        author:    "mirkulix"
+        date:      "2026-04-11"
+        system:    "Fedora 43 | 2x RTX 2070 Super NVLink | 64 GB RAM | 24 Cores"
+        qlang_ver: "0.1.0"
+    }
+
+    // ── Graphify Extraction ──────────────────────────────────
+    node graphify_detect : detect {
+        input:  path = "."
+        output: corpus -> Tensor<i32>[2]  // [299 files, 358882 words]
+    }
+
+    node graphify_ast : extract {
+        input:  code_files = 254
+        output: ast_graph -> Tensor<i32>[2]  // [3970 nodes, 8489 edges]
+    }
+
+    node graphify_semantic : subgraph {
+        // 2 parallel agents extracted 45 doc files
+        input:  doc_files = 45
+        output: semantic_graph -> Tensor<i32>[2]  // [167 nodes, 183 edges]
+    }
+
+    node graphify_merge : add {
+        input:  ast_graph, semantic_graph
+        output: knowledge_graph -> Tensor<i32>[2]  // [4203 nodes, 7990 edges]
+    }
+
+    edge graphify_detect -> graphify_ast
+    edge graphify_detect -> graphify_semantic
+    edge graphify_ast -> graphify_merge
+    edge graphify_semantic -> graphify_merge
+
+    // ── GPU Training Pipeline ────────────────────────────────
+    node data_download : subgraph {
+        // WikiText-2: 36718 lines, MNIST: 60K images
+        output: wikitext2 -> Tensor<i8>[36718, 512]   // tokenized text
+        output: mnist     -> Tensor<f32>[60000, 784]   // images
+    }
+
+    node gpu_detect : detect {
+        // Hardware detection
+        output: gpu0 -> Tensor<f32>[4]  // [8192 MiB, 1310 used, 25.8 GB/s NVLink, 0=display]
+        output: gpu1 -> Tensor<f32>[4]  // [8192 MiB, 2 used, 25.8 GB/s NVLink, 1=training]
+    }
+
+    node mamba_model : subgraph {
+        // Mamba LM Architecture: BPE -> Embedding -> 6x Mamba -> Head
+        metadata {
+            d_model:    512
+            d_hidden:   1024
+            d_state:    32
+            n_layers:   6
+            vocab_size: 8000
+            seq_len:    128
+            params:     "~120M"
+        }
+        input:  config -> Tensor<i32>[7]  // [512, 1024, 32, 6, 8000, 128, 120000000]
+        output: model  -> State<f32>[120000000]  // density operator over 120M params
+    }
+
+    node train_dual_gpu : evolve {
+        // Quantum gradient flow on dual GPU via NVLink
+        // dρ/dt = -i[H, ρ] - γ{G⁻¹∇L, ρ}
+        metadata {
+            backend:    "tch-rs (PyTorch 2.11, CUDA 13.0)"
+            device:     "GPU 0 + GPU 1 via NVLink"
+            batch_size: 16
+            lr:         0.003
+            steps:      10000
+            gpu0_util:  "51%"
+            gpu1_util:  "45%"
+            gpu1_power: "149W"
+        }
+        input:  model -> State<f32>[120000000]
+        input:  data  -> wikitext2
+        input:  H     -> Tensor<f32>[1]    // Hamiltonian (loss landscape)
+        input:  gamma -> Tensor<f32>[1]    // damping = 0.003
+        input:  dt    -> Tensor<f32>[1]    // timestep = 1/steps
+        output: trained_model -> State<f32>[120000000]
+        output: loss_curve    -> Tensor<f32>[10000]  // loss per step
+        output: ppl_curve     -> Tensor<f32>[10000]  // perplexity per step
+
+        constraint: trace(trained_model) == 1.0      // density matrix normalized
+        constraint: ppl_curve[-1] < ppl_curve[0]     // perplexity must decrease
+    }
+
+    node save_model : subgraph {
+        // QLMB binary format: magic + dims + weights
+        input:  trained_model
+        output: qlmb_file -> Tensor<i8>[9600000]  // ~9.6 MB .bin file
+        output: ternary_file -> Tensor<ternary>[120000000]  // compressed
+    }
+
+    edge data_download -> train_dual_gpu
+    edge mamba_model -> train_dual_gpu
+    edge gpu_detect -> train_dual_gpu
+    edge train_dual_gpu -> save_model
+
+    // ── Training Results ─────────────────────────────────────
+    node training_results : subgraph {
+        metadata {
+            step_reached:  50
+            total_steps:   10000
+            init_ppl:      7914.0
+            final_ppl:     7977.3
+            loss:          8.986
+            speed:         "0.99 steps/sec"
+            status:        "aborted_by_user"
+            reason:        "morgen weiter"
+            gpu0_vram:     "2358 MiB"
+            gpu1_vram:     "907 MiB"
+            model_file:    "data/mamba_30m_final.bin"
+        }
+    }
+
+    edge train_dual_gpu -> training_results
+
+    // ── Spiking Neural Network (Neuromorphic) ────────────────
+    node spiking_module : subgraph {
+        metadata {
+            neurons:     "LIF (Leaky Integrate-and-Fire)"
+            plasticity:  "STDP (Spike-Timing Dependent Plasticity)"
+            weights:     "ternary {-1, 0, +1}"
+            hdc_dim:     10000
+            lines:       523
+        }
+
+        node lif_neuron : scan {
+            // V(t+dt) = V(t) + dt/tau * (-V(t) + I(t))
+            // if V >= threshold: spike, reset
+            input:  current   -> Tensor<f32>[1]     // input current
+            input:  membrane  -> Tensor<f32>[1]     // V(t)
+            input:  tau       -> Tensor<f32>[1]     // time constant = 20.0
+            input:  threshold -> Tensor<f32>[1]     // spike threshold = 1.0
+            output: spike     -> Tensor<bool>[1]    // did it fire?
+            output: membrane_next -> Tensor<f32>[1] // V(t+dt)
+        }
+
+        node stdp_update : subgraph {
+            // Pre before post → LTP (strengthen): Δw = A+ * exp(-Δt/τ+)
+            // Post before pre → LTD (weaken):     Δw = -A- * exp(Δt/τ-)
+            input:  dt_spike -> Tensor<f32>[1]  // time difference
+            output: dw       -> Tensor<f32>[1]  // weight change
+        }
+
+        node spiking_layer : subgraph {
+            // Layer of LIF neurons with ternary weights
+            // Hot loop: NO float multiply, only add/sub (neuromorphic principle)
+            input:  spikes_in  -> Tensor<bool>[in_dim]
+            input:  weights    -> Tensor<ternary>[out_dim, in_dim]
+            output: spikes_out -> Tensor<bool>[out_dim]
+        }
+
+        node spikes_to_hd : subgraph {
+            // SynapseHD pattern: SNN output → HDC hypervector
+            input:  spike_counts -> Tensor<i32>[out_dim]
+            output: hd_vector    -> Tensor<ternary>[10000]
+        }
+    }
+
+    // ── Organism Integration ─────────────────────────────────
+    node organism : subgraph {
+        metadata {
+            specialists: 5
+            generation:  0
+        }
+
+        node classifier : subgraph {
+            // TernaryBrain: 99.6% MNIST accuracy
+            metadata { accuracy: 0.996, dataset: "MNIST", weights: "ternary" }
+            input:  image -> Tensor<f32>[784]
+            output: class -> Distribution<i32>[10]
+        }
+
+        node memory : subgraph {
+            // HDC: 10000-dim ternary associative memory
+            input:  query   -> Tensor<ternary>[10000]
+            output: recall  -> Tensor<ternary>[10000]
+        }
+
+        node language : subgraph {
+            // Mamba LM: GPU-trained, loaded from QLMB
+            metadata { model_file: "data/mamba_30m_final.bin", status: "unk_tokens_bug" }
+            input:  prompt -> Tensor<i32>[128]
+            output: text   -> Tensor<i32>[128]
+        }
+
+        node spiking_specialist : subgraph {
+            // LIF + STDP neuromorphic classifier
+            input:  input    -> Tensor<f32>[784]
+            output: class    -> Distribution<i32>[10]
+            output: hd_trace -> Tensor<ternary>[10000]
+        }
+
+        node orchestrator : cond {
+            // Routes input to the right specialist
+            input:  raw_input -> Tensor<i8>[1024]
+            output: response  -> Tensor<i8>[1024]
+        }
+
+        edge orchestrator -> classifier
+        edge orchestrator -> memory
+        edge orchestrator -> language
+        edge orchestrator -> spiking_specialist
+    }
+
+    edge spiking_module -> organism
+    edge save_model -> organism
+
+    // ── WebUI + Dashboards ───────────────────────────────────
+    node webui : subgraph {
+        metadata {
+            server:  "Axum on port 4646"
+            theme:   "Light (default) + Dark toggle"
+        }
+
+        node gpu_training_view : subgraph {
+            // Live SSE streaming: Loss, PPL, Speed, ETA, Generated Text
+            metadata { lines: 479, file: "frontend/src/GpuTrainingView.tsx" }
+        }
+
+        node spiking_view : subgraph {
+            // Spike Raster, Membrane Traces, 28x28 Canvas, STDP Training
+            metadata { lines: 454, file: "frontend/src/SpikingView.tsx" }
+        }
+
+        node api_routes : subgraph {
+            // POST /api/training/gpu       — Start GPU training (SSE)
+            // GET  /api/training/gpu/status — Training status + history
+            // POST /api/training/gpu/stop   — Graceful stop
+            // GET  /api/training/gpu/stream — Subscribe to live events
+            // POST /api/spiking/run         — Run spiking network
+            // POST /api/spiking/train       — Train with STDP (SSE)
+            // POST /api/organism/load-model — Load QLMB into organism
+        }
+    }
+
+    node playwright_dashboards : subgraph {
+        metadata {
+            agents_tracked: 18
+            interactions:   870
+        }
+
+        node agent_dashboard : subgraph {
+            // GPU Training, Spiking, Organism, GPU Hardware — live polling
+            metadata { file: "scripts/agent-dashboard.mjs" }
+        }
+
+        node interactions_dashboard : subgraph {
+            // All Claude Code subagent interactions — tool calls, text, results
+            metadata { file: "scripts/claude-agents-dashboard.mjs" }
+        }
+    }
+
+    // ── Session Totals ───────────────────────────────────────
+    node session_summary : subgraph {
+        metadata {
+            files_created:  18
+            lines_written:  3300
+            agents_spawned: 18
+            tool_calls:     870
+            rust_files:     14
+            tsx_files:       2
+            mjs_files:       2
+            graph_nodes:     4203
+            graph_edges:     7990
+            graph_communities: 175
+        }
+    }
+
+    edge graphify_merge -> session_summary
+    edge training_results -> session_summary
+    edge organism -> session_summary
+    edge webui -> session_summary
+    edge playwright_dashboards -> session_summary
+
+    // ── Known Issues (for tomorrow) ──────────────────────────
+    node known_issues : subgraph {
+        metadata {
+            issue_1: "Tokenizer not saved in QLMB → organism language produces <unk>"
+            issue_2: "GPU util 45-51% — Mamba recurrence is sequential bottleneck"
+            issue_3: "Training aborted at step 50/10000 — needs 2.5h to complete"
+            issue_4: "Spiking MNIST accuracy 10% after 2 epochs — needs more training"
+        }
+    }
+
+    // ── Next Steps (tomorrow) ────────────────────────────────
+    node next_steps : subgraph {
+        metadata {
+            step_1: "Fix tokenizer: save vocab in QLMB format"
+            step_2: "Resume training d=512, 6L, 10K+ steps"
+            step_3: "Ternary compression of trained model (IGQK)"
+            step_4: "Spiking MNIST training with 20+ epochs"
+            step_5: "Session tracking via QLANG GraphStore statt Markdown"
+        }
+    }
+
+    edge known_issues -> next_steps
+}

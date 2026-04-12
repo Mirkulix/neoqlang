@@ -31,12 +31,17 @@ impl VoteCounter {
     /// Cast a vote based on correlation and reward.
     #[inline]
     fn vote(&mut self, pre: f32, post: f32, reward: f32) {
+        // Only vote when both neurons are active (avoid dead-neuron zero bias)
+        if post.abs() < 1e-8 || pre.abs() < 1e-8 {
+            return; // Skip — no signal to learn from
+        }
+
         // STDP-like correlation: does pre-activity predict post-activity?
         let correlation = pre * post * reward;
 
-        if correlation > 0.1 {
+        if correlation > 1e-6 {
             self.pos += 1;    // strengthen: w should be +1
-        } else if correlation < -0.1 {
+        } else if correlation < -1e-6 {
             self.neg += 1;    // inhibit: w should be -1
         } else {
             self.zero += 1;   // no clear signal: w should be 0
@@ -44,14 +49,19 @@ impl VoteCounter {
     }
 
     /// Determine the winning ternary state via majority vote.
+    /// Returns None if no votes were cast (keep existing weight).
     #[inline]
-    fn decide(&self) -> TWeight {
+    fn decide(&self) -> Option<TWeight> {
+        let total = self.pos + self.neg + self.zero;
+        if total == 0 {
+            return None; // No signal — keep current weight
+        }
         if self.pos > self.neg && self.pos > self.zero {
-            1
+            Some(1)
         } else if self.neg > self.pos && self.neg > self.zero {
-            -1
+            Some(-1)
         } else {
-            0
+            Some(0)
         }
     }
 
@@ -87,11 +97,22 @@ impl VoteLayer {
             })
             .collect();
 
+        // Pre-seed votes to bias toward current weight, preventing early collapse
+        let votes: Vec<VoteCounter> = weights.iter().map(|&w| {
+            let mut vc = VoteCounter::default();
+            match w {
+                1 => vc.pos = 5,
+                -1 => vc.neg = 5,
+                _ => vc.zero = 3,
+            }
+            vc
+        }).collect();
+
         Self {
             weights,
-            votes: vec![VoteCounter::default(); out_dim * in_dim],
+            votes,
             biases: vec![0.0; out_dim],
-            scale: 1.0,
+            scale: 1.0 / (in_dim as f32).sqrt(),
             in_dim,
             out_dim,
         }
@@ -121,7 +142,7 @@ impl VoteLayer {
                             _ => {} // 0: skip — no operation
                         }
                     }
-                    out[j] = sum.max(0.0); // ReLU
+                    out[j] = if sum > 0.0 { sum } else { 0.01 * sum }; // Leaky ReLU
                 }
                 out
             })
@@ -184,20 +205,22 @@ impl VoteLayer {
     pub fn apply_votes(&mut self) -> usize {
         let mut changed = 0;
         for i in 0..self.weights.len() {
-            let new_w = self.votes[i].decide();
-            if new_w != self.weights[i] {
-                self.weights[i] = new_w;
-                changed += 1;
+            if let Some(new_w) = self.votes[i].decide() {
+                if new_w != self.weights[i] {
+                    self.weights[i] = new_w;
+                    changed += 1;
+                }
             }
+            // Keep current weight if no votes were cast
             self.votes[i].reset();
         }
 
-        // Update scale from activation statistics
+        // Update scale: Kaiming-like normalization per output neuron
+        // Average non-zero weights per output neuron
         let non_zero = self.weights.iter().filter(|&&w| w != 0).count();
-        let total = self.weights.len();
-        // Scale compensates for sparsity: more zeros → higher scale
-        if non_zero > 0 {
-            self.scale = (total as f32 / non_zero as f32).sqrt() * 0.1;
+        let avg_nz_per_out = non_zero as f32 / self.out_dim.max(1) as f32;
+        if avg_nz_per_out > 0.0 {
+            self.scale = 1.0 / avg_nz_per_out.sqrt();
         }
 
         changed
@@ -445,7 +468,7 @@ mod tests {
         for _ in 0..2 {
             counter.vote(1.0, -1.0, 1.0); // pre*post*reward < 0 → neg
         }
-        assert_eq!(counter.decide(), 1); // +1 wins
+        assert_eq!(counter.decide(), Some(1)); // +1 wins
     }
 
     #[test]

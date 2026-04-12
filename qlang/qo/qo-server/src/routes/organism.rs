@@ -73,6 +73,36 @@ pub async fn evolve() -> Json<serde_json::Value> {
     }))
 }
 
+#[derive(Deserialize)]
+pub struct LoadModelInput {
+    /// Path to the QLMB binary file (e.g. "data/mamba_30m_final.bin")
+    pub path: String,
+    /// Reference text for rebuilding the tokenizer (can be short)
+    #[serde(default)]
+    pub tokenizer_text: String,
+}
+
+/// POST /api/organism/load-model — load a trained Mamba LM into the organism
+pub async fn load_model(Json(input): Json<LoadModelInput>) -> Json<serde_json::Value> {
+    let mut org = ORGANISM.lock().await;
+    let text = if input.tokenizer_text.is_empty() {
+        "the cat sat on the mat the dog ran in the park".to_string()
+    } else {
+        input.tokenizer_text
+    };
+    match org.add_language_model(&input.path, &text) {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "message": format!("Language model loaded from {}", input.path),
+            "specialists": org.specialist_count(),
+        })),
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e,
+        })),
+    }
+}
+
 /// GET /api/organism/status — get organism status
 pub async fn status() -> Json<serde_json::Value> {
     let org = ORGANISM.lock().await;

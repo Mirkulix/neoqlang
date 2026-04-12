@@ -47,13 +47,13 @@ impl RandomConvBank {
             let mut filter = Vec::with_capacity(filter_size);
             for _ in 0..filter_size {
                 rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                let val = ((rng >> 33) as f64 / u32::MAX as f64 - 0.5) as f32 * 2.0 * scale;
+                let val = ((rng >> 32) as f64 / u32::MAX as f64 - 0.5) as f32 * 2.0 * scale;
                 filter.push(val);
             }
             filters.push(filter);
 
             rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-            biases.push(0.0); // zero bias
+            biases.push(0.01); // small positive bias to help ReLU pass signal
         }
 
         Self { filters, biases, kernel_size, in_channels, n_filters, image_size }
@@ -61,29 +61,26 @@ impl RandomConvBank {
 
     /// Apply all filters to one image and return feature vector.
     ///
-    /// For each filter: convolve → ReLU → spatial quadrant pooling → 4 scalars.
-    /// Returns [n_filters * 4] features (4 quadrants per filter).
+    /// For each filter: convolve → global max pooling → 1 scalar.
+    /// Returns [n_filters] features.
     fn extract_one(&self, image: &[f32]) -> Vec<f32> {
         let h = self.image_size;
         let w = self.image_size;
         let c = self.in_channels;
         let k = self.kernel_size;
         let pad = k / 2;
-        let half_h = h / 2;
-        let half_w = w / 2;
 
-        let mut features = Vec::with_capacity(self.n_filters * 4);
+        let mut features = Vec::with_capacity(self.n_filters);
 
         for f_idx in 0..self.n_filters {
             let filter = &self.filters[f_idx];
             let bias = self.biases[f_idx];
 
-            // Compute full convolution map → ReLU → pool per quadrant
-            let mut quad_sum = [0.0f32; 4]; // TL, TR, BL, BR
-            let mut quad_count = [0u32; 4];
+            // Compute full convolution map → global max pool
+            let mut max_val = f32::NEG_INFINITY;
 
-            for oy in (0..h).step_by(2) {
-                for ox in (0..w).step_by(2) {
+            for oy in 0..h {
+                for ox in 0..w {
                     let mut conv_sum = bias;
                     for ch in 0..c {
                         for ky in 0..k {
@@ -99,31 +96,21 @@ impl RandomConvBank {
                         }
                     }
 
-                    // ReLU
-                    let activated = conv_sum.max(0.0);
-
-                    // Quadrant pooling
-                    let qi = if oy < half_h {
-                        if ox < half_w { 0 } else { 1 }
-                    } else {
-                        if ox < half_w { 2 } else { 3 }
-                    };
-                    quad_sum[qi] += activated;
-                    quad_count[qi] += 1;
+                    if conv_sum > max_val {
+                        max_val = conv_sum;
+                    }
                 }
             }
 
-            for q in 0..4 {
-                features.push(if quad_count[q] > 0 { quad_sum[q] / quad_count[q] as f32 } else { 0.0 });
-            }
+            features.push(if max_val > f32::NEG_INFINITY { max_val } else { 0.0 });
         }
 
         features
     }
 
-    /// Feature dimension = n_filters * 4 (quadrant pooling).
+    /// Feature dimension = n_filters (global average pooling).
     pub fn feature_dim(&self) -> usize {
-        self.n_filters * 4
+        self.n_filters
     }
 
     /// Extract features for all images in parallel.

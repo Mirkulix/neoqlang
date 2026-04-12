@@ -451,6 +451,85 @@ impl TrainableLM {
     pub fn param_count(&self) -> usize {
         self.embedding.len() + self.layers.iter().map(|l| l.param_count()).sum::<usize>() + self.output_head.len()
     }
+
+    /// Construct a TrainableLM from pre-loaded weights (used by QLMB loader).
+    pub fn from_weights(
+        embedding: Vec<f32>,
+        output_head: Vec<f32>,
+        layers: Vec<TrainableMamba>,
+        d_model: usize,
+        vocab_size: usize,
+        tokenizer: crate::qlang_lm::Tokenizer,
+    ) -> Self {
+        Self { embedding, layers, output_head, d_model, vocab_size, tokenizer }
+    }
+}
+
+/// Load a trained Mamba LM from a QLMB binary file.
+///
+/// The `text_for_tokenizer` is used to rebuild the BPE tokenizer with the
+/// same vocabulary size stored in the model. If empty, a minimal placeholder
+/// is used.
+pub fn load_mamba_model(path: &str, text_for_tokenizer: &str) -> Result<TrainableLM, String> {
+    let data = std::fs::read(path).map_err(|e| format!("Cannot read '{}': {}", path, e))?;
+    if data.len() < 16 {
+        return Err("File too small to be QLMB".into());
+    }
+    if &data[0..4] != b"QLMB" {
+        return Err(format!("Bad magic: expected QLMB, got {:?}", &data[0..4]));
+    }
+    let mut pos = 4usize;
+
+    let read_u32 = |pos: &mut usize, data: &[u8]| -> Result<u32, String> {
+        if *pos + 4 > data.len() { return Err("Unexpected EOF reading u32".into()); }
+        let v = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+        *pos += 4;
+        Ok(v)
+    };
+
+    let read_f32_vec = |pos: &mut usize, data: &[u8]| -> Result<Vec<f32>, String> {
+        let len = read_u32(pos, data)? as usize;
+        if *pos + len * 4 > data.len() {
+            return Err(format!("Unexpected EOF reading {} f32s at offset {}", len, *pos));
+        }
+        let mut v = Vec::with_capacity(len);
+        for _ in 0..len {
+            let f = f32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+            *pos += 4;
+            v.push(f);
+        }
+        Ok(v)
+    };
+
+    let d_model = read_u32(&mut pos, &data)? as usize;
+    let vocab_size = read_u32(&mut pos, &data)? as usize;
+    let n_layers = read_u32(&mut pos, &data)? as usize;
+
+    let embedding = read_f32_vec(&mut pos, &data)?;
+    let output_head = read_f32_vec(&mut pos, &data)?;
+
+    let mut layers = Vec::with_capacity(n_layers);
+    for _ in 0..n_layers {
+        let w_x = read_f32_vec(&mut pos, &data)?;
+        let w_h = read_f32_vec(&mut pos, &data)?;
+        let w_gate = read_f32_vec(&mut pos, &data)?;
+        let w_out = read_f32_vec(&mut pos, &data)?;
+        let b_h = read_f32_vec(&mut pos, &data)?;
+        let b_gate = read_f32_vec(&mut pos, &data)?;
+
+        // Infer d_hidden from w_x: w_x is [d_model, d_hidden] → len = d_model * d_hidden
+        let d_hidden = if d_model > 0 { w_x.len() / d_model } else { 0 };
+
+        layers.push(TrainableMamba {
+            w_x, w_h, w_gate, w_out, b_h, b_gate,
+            d_model, d_hidden,
+        });
+    }
+
+    let text = if text_for_tokenizer.is_empty() { "a b c d" } else { text_for_tokenizer };
+    let tokenizer = crate::qlang_lm::Tokenizer::from_text(text, vocab_size);
+
+    Ok(TrainableLM::from_weights(embedding, output_head, layers, d_model, vocab_size, tokenizer))
 }
 
 #[cfg(test)]

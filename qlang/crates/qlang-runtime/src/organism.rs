@@ -62,6 +62,16 @@ pub enum SpecialistRole {
     Reasoner {
         system: NeuroSymbolicSystem,
     },
+    /// Spiking neural network specialist (neuromorphic)
+    Spiking {
+        network: crate::spiking::SpikingNetwork,
+        timesteps: usize,
+        class_names: Vec<String>,
+    },
+    /// Trained Mamba language model for text generation
+    LanguageModel {
+        lm: crate::mamba_train::TrainableLM,
+    },
 }
 
 /// The organism: orchestrator + specialists + shared memory.
@@ -172,6 +182,35 @@ impl Organism {
         });
     }
 
+    /// Add a spiking neural network specialist.
+    pub fn add_spiking(
+        &mut self,
+        name: &str,
+        layer_sizes: &[usize],
+        timesteps: usize,
+        class_names: Vec<String>,
+    ) {
+        let network = crate::spiking::SpikingNetwork::new(layer_sizes);
+        self.specialists.push(Specialist {
+            name: name.to_string(),
+            role: SpecialistRole::Spiking { network, timesteps, class_names },
+            invocations: 0,
+            success_rate: 1.0,
+        });
+    }
+
+    /// Load a trained Mamba LM from a QLMB binary file and add as Language specialist.
+    pub fn add_language_model(&mut self, path: &str, text_for_tokenizer: &str) -> Result<(), String> {
+        let lm = crate::mamba_train::load_mamba_model(path, text_for_tokenizer)?;
+        self.specialists.push(Specialist {
+            name: "language".into(),
+            role: SpecialistRole::LanguageModel { lm },
+            invocations: 0,
+            success_rate: 1.0,
+        });
+        Ok(())
+    }
+
     /// Add a rule-based reasoner.
     pub fn add_reasoner(&mut self, name: &str, matcher: NeuralMatcher, rules: Vec<Rule>) {
         let mut system = NeuroSymbolicSystem::new(matcher);
@@ -253,12 +292,16 @@ impl Organism {
         // Simple keyword routing (a real organism would use a classifier here)
         let category = if lower.contains("hello") || lower.contains("hi") || lower.contains("hey") {
             "greeting"
-        } else if lower.contains('?') || lower.contains("what") || lower.contains("how") || lower.contains("why") {
-            "question"
         } else if lower.contains("remember") || lower.contains("recall") || lower.contains("memory") {
             "memory"
         } else if lower.contains("classify") || lower.contains("predict") {
             "classify"
+        } else if lower.contains("generate") || lower.contains("write") || lower.contains("tell me")
+            || lower.contains("explain") || lower.contains("describe") || lower.contains("continue")
+        {
+            "language"
+        } else if lower.contains('?') || lower.contains("what") || lower.contains("how") || lower.contains("why") {
+            "question"
         } else {
             // Default: try classifier if available, otherwise unknown
             "classify_or_respond"
@@ -268,7 +311,51 @@ impl Organism {
 
         // Find and invoke specialist
         match category {
-            "greeting" | "question" | "unknown" => {
+            "language" => {
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::LanguageModel { ref lm } = spec.role {
+                        let generated = lm.generate_with_temp(input, 30, 0.7);
+                        spec.invocations += 1;
+                        reasoning.push("Language model generated response".into());
+                        return (spec.name.clone(), generated);
+                    }
+                }
+                // No language model loaded — fall through to responder
+                reasoning.push("No language model loaded, using template".into());
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Responder { templates } = &spec.role {
+                        let resps = templates.get("unknown").unwrap();
+                        let idx = spec.invocations as usize % resps.len();
+                        spec.invocations += 1;
+                        return (spec.name.clone(), resps[idx].clone());
+                    }
+                }
+            }
+            "question" => {
+                // Prefer language model for questions if available
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::LanguageModel { ref lm } = spec.role {
+                        let generated = lm.generate_with_temp(input, 30, 0.7);
+                        spec.invocations += 1;
+                        reasoning.push("Language model answered question".into());
+                        return (spec.name.clone(), generated);
+                    }
+                }
+                // Fall back to template responder
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Responder { templates } = &spec.role {
+                        let resps = templates.get("question").or_else(|| templates.get("unknown"));
+                        if let Some(resps) = resps {
+                            let idx = (spec.invocations as usize) % resps.len();
+                            spec.invocations += 1;
+                            let response = resps[idx].clone();
+                            reasoning.push(format!("Responder selected template #{}", idx));
+                            return (spec.name.clone(), response);
+                        }
+                    }
+                }
+            }
+            "greeting" | "unknown" => {
                 for spec in &mut self.specialists {
                     if let SpecialistRole::Responder { templates } = &spec.role {
                         let responses = templates.get(category).or_else(|| templates.get("unknown"));
@@ -299,7 +386,21 @@ impl Organism {
                 }
             }
             "classify" | "classify_or_respond" => {
-                // Try each classifier
+                // Try spiking specialist first, then classifier
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::Spiking { network, timesteps, class_names } = &mut spec.role {
+                        let features: Vec<f32> = input_vec.data.iter()
+                            .map(|&v| if v > 0 { 1.0 } else { 0.0 })
+                            .collect();
+                        let n_classes = class_names.len().max(1);
+                        let class = network.classify(&features, *timesteps, n_classes);
+                        let class_name = class_names.get(class).map(|s| s.as_str()).unwrap_or("?");
+                        spec.invocations += 1;
+                        reasoning.push(format!("Spiking classified as: {} (class {})", class_name, class));
+                        let response = format!("Spiking network says: {}", class_name);
+                        return (spec.name.clone(), response);
+                    }
+                }
                 for spec in &mut self.specialists {
                     if let SpecialistRole::Classifier { brain, class_names } = &spec.role {
                         let features: Vec<f32> = input_vec.data.iter().map(|&v| v as f32).collect();
@@ -323,7 +424,15 @@ impl Organism {
                         return (spec.name.clone(), response);
                     }
                 }
-                // No classifier available, use responder
+                // No classifier available — try language model, then responder
+                for spec in &mut self.specialists {
+                    if let SpecialistRole::LanguageModel { ref lm } = spec.role {
+                        let generated = lm.generate_with_temp(input, 30, 0.7);
+                        spec.invocations += 1;
+                        reasoning.push("Language model generated response (fallback)".into());
+                        return (spec.name.clone(), generated);
+                    }
+                }
                 for spec in &mut self.specialists {
                     if let SpecialistRole::Responder { templates } = &spec.role {
                         let resps = templates.get("unknown").unwrap();

@@ -48,7 +48,7 @@ impl LayerWeights {
         }).collect();
         let biases = vec![0.0f32; out_dim];
 
-        Self { shadow, ternary, biases, alpha: scale, in_dim, out_dim, threshold: 0.5, lr: 0.01 }
+        Self { shadow, ternary, biases, alpha: scale, in_dim, out_dim, threshold: out_dim as f32, lr: 0.03 }
     }
 
     /// Forward pass using shadow weights: output = ReLU(input @ W + bias)

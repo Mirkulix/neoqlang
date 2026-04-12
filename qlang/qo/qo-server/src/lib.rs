@@ -32,6 +32,8 @@ pub struct AppState {
     pub memory: Mutex<MemoryContext>,
     /// QLANG Message Bus — routes GraphMessages between AI agents.
     pub message_bus: Arc<MessageBus>,
+    /// GPU training state — tracks running training job for SSE streaming.
+    pub gpu_training: Arc<routes::gpu_training::GpuTrainingState>,
 }
 
 pub struct QoConfig {
@@ -196,6 +198,7 @@ pub async fn build_app(
         configured_providers: Mutex::new(configured_providers),
         memory: Mutex::new(memory_ctx),
         message_bus: message_bus.clone(),
+        gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
     });
 
     // Register all QO agents on the message bus.
@@ -253,7 +256,7 @@ pub async fn build_app(
         .route("/api/evolution/analyze", post(routes::evolution::analyze))
         .route("/api/history", get(routes::history::get_history))
         .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))
-        .route("/api/graphs", get(routes::graphs::list_graphs))
+        .route("/api/graphs", get(routes::graphs::list_graphs).post(routes::graphs::store_graph))
         .route("/api/graphs/stats", get(routes::graphs::graph_stats))
         .route("/api/graphs/{id}", get(routes::graphs::get_graph))
         .route("/api/providers", get(routes::providers::list_providers))
@@ -277,8 +280,16 @@ pub async fn build_app(
         .route("/api/organism/chat", post(routes::organism::chat))
         .route("/api/organism/evolve", post(routes::organism::evolve))
         .route("/api/organism/status", get(routes::organism::status))
+        .route("/api/organism/load-model", post(routes::organism::load_model))
         .route("/api/training/qlang", post(routes::training::train_qlang))
         .route("/api/training/monitor", get(routes::train_monitor::monitor))
+        .route("/api/training/gpu", post(routes::gpu_training::start_gpu_training))
+        .route("/api/training/gpu/status", get(routes::gpu_training::gpu_training_status))
+        .route("/api/training/gpu/stop", post(routes::gpu_training::stop_gpu_training))
+        .route("/api/training/gpu/stream", get(routes::gpu_training::gpu_training_stream))
+        .route("/api/spiking/run", post(routes::spiking::run_spiking))
+        .route("/api/spiking/train", post(routes::spiking::train_spiking))
+        .route("/api/spiking/status", get(routes::spiking::spiking_status))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

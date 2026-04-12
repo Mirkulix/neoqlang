@@ -2000,6 +2000,19 @@ impl VmState {
             Expr::Index { array, index } => {
                 let arr_val = self.eval_expr(array)?;
                 let idx_val = self.eval_expr(index)?;
+                // Handle dict indexing with string keys first (before as_number)
+                if let Value::Dict(entries) = &arr_val {
+                    let key = match &idx_val {
+                        Value::String(s) => s.clone(),
+                        other => return Err(VmError::TypeError(format!("dict key must be string, got {}", other.type_name()))),
+                    };
+                    for (k, v) in entries {
+                        if k == &key {
+                            return Ok(v.clone());
+                        }
+                    }
+                    return Err(VmError::RuntimeError(format!("key '{}' not found in dict", key)));
+                }
                 let idx_num = idx_val.as_number()?;
                 if idx_num < 0.0 {
                     return Err(VmError::IndexOutOfBounds {
@@ -2014,18 +2027,6 @@ impl VmState {
                             return Err(VmError::IndexOutOfBounds { index: idx_num as isize, len: arr.len() });
                         }
                         Ok(Value::Number(arr[idx]))
-                    }
-                    Value::Dict(entries) => {
-                        let key = match &idx_val {
-                            Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("dict key must be string, got {}", other.type_name()))),
-                        };
-                        for (k, v) in entries {
-                            if k == &key {
-                                return Ok(v.clone());
-                            }
-                        }
-                        Err(VmError::RuntimeError(format!("key '{}' not found in dict", key)))
                     }
                     Value::String(s) => {
                         let chars: Vec<char> = s.chars().collect();

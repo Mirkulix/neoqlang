@@ -9,6 +9,7 @@ import {
   GitBranch,
   Clock,
   Mail,
+  Zap,
   Sun,
   Moon,
 } from 'lucide-react'
@@ -22,10 +23,12 @@ import HistorieView from './HistorieView'
 import ProviderView from './ProviderView'
 import MessagesView from './MessagesView'
 import TrainingView from './TrainingView'
+import GpuTrainingView from './GpuTrainingView'
+import SpikingView from './SpikingView'
 import OrganismView from './OrganismView'
 import ActivityFeed from './ActivityFeed'
 
-type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'organism' | 'historie'
+type Tab = 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'graphs' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
@@ -37,6 +40,8 @@ const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'graphs', label: 'QLANG', icon: GitBranch },
   { id: 'messages', label: 'Messages', icon: Mail },
   { id: 'training', label: 'Training', icon: Dna },
+  { id: 'gpu-training', label: 'GPU Training', icon: Zap },
+  { id: 'spiking', label: 'Spiking', icon: Brain },
   { id: 'organism', label: 'Organismus', icon: Brain },
   { id: 'historie', label: 'Historie', icon: Clock },
 ]
@@ -52,6 +57,8 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
     case 'graphs': return <GraphsView />
     case 'messages': return <MessagesView />
     case 'training': return <TrainingView />
+    case 'gpu-training': return <GpuTrainingView />
+    case 'spiking': return <SpikingView />
     case 'organism': return <OrganismView />
     case 'historie': return <HistorieView onNavigate={onNavigate} />
   }
@@ -60,7 +67,8 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('chat')
   const [darkMode, setDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('qo-theme') === 'dark'
+    const saved = localStorage.getItem('qo-theme')
+    return saved === 'dark'
   })
   const [connected, setConnected] = useState<boolean>(true)
 

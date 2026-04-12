@@ -6,38 +6,40 @@
    ═══════════════════════════════════════════════════════ */
 
 :root {
-  --bg-primary: #04060b;
-  --bg-surface: #0a0d14;
-  --bg-elevated: #0f1219;
-  --bg-input: #141820;
+  /* Light theme is default */
+  --bg-primary: #f4f6fb;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f0f2f8;
+  --bg-input: #e6e9f0;
 
-  --text-primary: #d4d8e4;
-  --text-secondary: #7a8199;
-  --text-muted: #3d4455;
+  --text-primary: #0f1219;
+  --text-secondary: #4a5068;
+  --text-muted: #8b90a0;
 
-  --accent-primary: #4f8eff;
-  --accent-secondary: #6ba1ff;
-  --accent-success: #2dd4a0;
-  --accent-warning: #fbbf24;
-  --accent-danger: #f87171;
-  --accent-info: #38bdf8;
-  --accent-purple: #a78bfa;
-  --accent-pink: #f472b6;
-  --accent-orange: #fb923c;
+  --accent-primary: #3b7de8;
+  --accent-secondary: #5a94f0;
+  --accent-success: #16a87a;
+  --accent-warning: #d9a007;
+  --accent-danger: #e04545;
+  --accent-info: #1a9fd4;
+  --accent-purple: #7c5fcf;
+  --accent-pink: #d4508e;
+  --accent-orange: #d97834;
 
-  --accent-achtsamkeit: #2dd4a0;
-  --accent-anerkennung: #a78bfa;
-  --accent-aufmerksamkeit: #fb923c;
-  --accent-entwicklung: #fbbf24;
-  --accent-sinn: #4f8eff;
+  --accent-achtsamkeit: #16a87a;
+  --accent-anerkennung: #7c5fcf;
+  --accent-aufmerksamkeit: #d97834;
+  --accent-entwicklung: #d9a007;
+  --accent-sinn: #3b7de8;
 
-  --border: #161b27;
-  --border-active: #4f8eff22;
-  --border-glow: #4f8eff44;
+  --border: #d8dce6;
+  --border-active: #3b7de822;
+  --border-glow: #3b7de833;
 
-  --glow-primary: 0 0 20px #4f8eff15, 0 0 40px #4f8eff08;
-  --glow-success: 0 0 20px #2dd4a015;
-  --glow-accent: 0 0 30px #4f8eff20;
+  --glow-primary: 0 2px 16px #3b7de812;
+  --glow-success: 0 2px 12px #16a87a12;
+  --glow-accent: 0 2px 20px #3b7de818;
+  --noise-opacity: 0;
 
   --sidebar-width: 200px;
   --activity-height: 180px;
@@ -58,18 +60,31 @@
   --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
 }
 
-/* Light mode override */
-[data-theme="light"] {
-  --bg-primary: #f0f2f7;
-  --bg-surface: #ffffff;
-  --bg-elevated: #f7f8fb;
-  --bg-input: #e8eaf0;
-  --text-primary: #0f1219;
-  --text-secondary: #4a5068;
-  --text-muted: #9da3b4;
-  --border: #dde0e8;
+/* ─── Dark Theme (Neural Noir) ─────────────────────── */
+[data-theme="dark"] {
+  --bg-primary: #04060b;
+  --bg-surface: #0a0d14;
+  --bg-elevated: #0f1219;
+  --bg-input: #141820;
+  --text-primary: #d4d8e4;
+  --text-secondary: #7a8199;
+  --text-muted: #3d4455;
+  --border: #161b27;
   --border-active: #4f8eff22;
-  --glow-primary: 0 2px 12px #4f8eff12;
+  --border-glow: #4f8eff44;
+  --glow-primary: 0 0 20px #4f8eff15, 0 0 40px #4f8eff08;
+  --glow-success: 0 0 20px #2dd4a015;
+  --glow-accent: 0 0 30px #4f8eff20;
+  --noise-opacity: 0.4;
+}
+
+/* Light mode: add subtle shadow for depth instead of glow */
+:root .card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+}
+
+:root .sidebar {
+  box-shadow: 2px 0 12px rgba(0,0,0,0.04);
 }
 
 * {
@@ -96,7 +111,7 @@ body::after {
   background-repeat: repeat;
   pointer-events: none;
   z-index: 9999;
-  opacity: 0.4;
+  opacity: var(--noise-opacity, 0);
 }
 
 h1, h2, h3, .heading {

@@ -1019,62 +1019,62 @@ impl BytecodeVm {
                 OpCode::Index => {
                     let idx_val = self.stack.pop().unwrap();
                     let arr_val = self.stack.pop().unwrap();
-                    let idx_num = idx_val.as_number()?;
-                    let idx = idx_num as usize;
-                    match &arr_val {
-                        Value::Array(arr) => {
-                            if idx >= arr.len() {
-                                return Err(VmError::IndexOutOfBounds {
-                                    index: idx_num as isize,
-                                    len: arr.len(),
-                                });
+                    // Handle dict indexing with string keys before as_number()
+                    if let Value::Dict(entries) = &arr_val {
+                        let key = match &idx_val {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "dict key must be string, got {}",
+                                    other.type_name_static()
+                                )))
                             }
-                            self.stack.push(Value::Number(arr[idx]));
+                        };
+                        let found = entries
+                            .iter()
+                            .find(|(k, _)| k == &key)
+                            .map(|(_, v)| v.clone());
+                        match found {
+                            Some(v) => self.stack.push(v),
+                            None => {
+                                return Err(VmError::RuntimeError(
+                                    format!(
+                                        "key '{}' not found in dict",
+                                        key
+                                    ),
+                                ))
+                            }
                         }
-                        Value::Dict(entries) => {
-                            let key = match &idx_val {
-                                Value::String(s) => s.clone(),
-                                other => {
-                                    return Err(VmError::TypeError(format!(
-                                        "dict key must be string, got {}",
-                                        other.type_name_static()
-                                    )))
+                    } else {
+                        let idx_num = idx_val.as_number()?;
+                        let idx = idx_num as usize;
+                        match &arr_val {
+                            Value::Array(arr) => {
+                                if idx >= arr.len() {
+                                    return Err(VmError::IndexOutOfBounds {
+                                        index: idx_num as isize,
+                                        len: arr.len(),
+                                    });
                                 }
-                            };
-                            let found = entries
-                                .iter()
-                                .find(|(k, _)| k == &key)
-                                .map(|(_, v)| v.clone());
-                            match found {
-                                Some(v) => self.stack.push(v),
-                                None => {
-                                    return Err(VmError::RuntimeError(
-                                        format!(
-                                            "key '{}' not found in dict",
-                                            key
-                                        ),
-                                    ))
+                                self.stack.push(Value::Number(arr[idx]));
+                            }
+                            Value::String(s) => {
+                                let chars: Vec<char> = s.chars().collect();
+                                if idx >= chars.len() {
+                                    return Err(VmError::IndexOutOfBounds {
+                                        index: idx_num as isize,
+                                        len: chars.len(),
+                                    });
                                 }
+                                self.stack
+                                    .push(Value::String(chars[idx].to_string()));
                             }
-                        }
-                        Value::String(s) => {
-                            let idx_num = idx_val.as_number()?;
-                            let idx = idx_num as usize;
-                            let chars: Vec<char> = s.chars().collect();
-                            if idx >= chars.len() {
-                                return Err(VmError::IndexOutOfBounds {
-                                    index: idx_num as isize,
-                                    len: chars.len(),
-                                });
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "cannot index into {}",
+                                    other.type_name_static()
+                                )))
                             }
-                            self.stack
-                                .push(Value::String(chars[idx].to_string()));
-                        }
-                        other => {
-                            return Err(VmError::TypeError(format!(
-                                "cannot index into {}",
-                                other.type_name_static()
-                            )))
                         }
                     }
                 }
@@ -1495,63 +1495,63 @@ impl BytecodeVm {
                 OpCode::Index => {
                     let idx_val = self.stack.pop().unwrap();
                     let arr_val = self.stack.pop().unwrap();
-                    let idx_num = idx_val.as_number()?;
-                    let idx = idx_num as usize;
-                    match &arr_val {
-                        Value::Array(arr) => {
-                            if idx >= arr.len() {
-                                return Err(VmError::IndexOutOfBounds {
-                                    index: idx_num as isize,
-                                    len: arr.len(),
-                                });
+                    // Handle dict indexing with string keys before as_number()
+                    if let Value::Dict(entries) = &arr_val {
+                        let key = match &idx_val {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "dict key must be string, got {}",
+                                    other.type_name_static()
+                                )))
                             }
-                            self.stack.push(Value::Number(arr[idx]));
+                        };
+                        let found = entries
+                            .iter()
+                            .find(|(k, _)| k == &key)
+                            .map(|(_, v)| v.clone());
+                        match found {
+                            Some(v) => self.stack.push(v),
+                            None => {
+                                return Err(VmError::RuntimeError(
+                                    format!(
+                                        "key '{}' not found in dict",
+                                        key
+                                    ),
+                                ))
+                            }
                         }
-                        Value::Dict(entries) => {
-                            let key = match &idx_val {
-                                Value::String(s) => s.clone(),
-                                other => {
-                                    return Err(VmError::TypeError(format!(
-                                        "dict key must be string, got {}",
-                                        other.type_name_static()
-                                    )))
+                    } else {
+                        let idx_num = idx_val.as_number()?;
+                        let idx = idx_num as usize;
+                        match &arr_val {
+                            Value::Array(arr) => {
+                                if idx >= arr.len() {
+                                    return Err(VmError::IndexOutOfBounds {
+                                        index: idx_num as isize,
+                                        len: arr.len(),
+                                    });
                                 }
-                            };
-                            let found = entries
-                                .iter()
-                                .find(|(k, _)| k == &key)
-                                .map(|(_, v)| v.clone());
-                            match found {
-                                Some(v) => self.stack.push(v),
-                                None => {
-                                    return Err(VmError::RuntimeError(
-                                        format!(
-                                            "key '{}' not found in dict",
-                                            key
-                                        ),
-                                    ))
+                                self.stack.push(Value::Number(arr[idx]));
+                            }
+                            Value::String(s) => {
+                                let chars: Vec<char> = s.chars().collect();
+                                if idx >= chars.len() {
+                                    return Err(VmError::IndexOutOfBounds {
+                                        index: idx_num as isize,
+                                        len: chars.len(),
+                                    });
                                 }
+                                self.stack.push(Value::String(
+                                    chars[idx].to_string(),
+                                ));
                             }
-                        }
-                        Value::String(s) => {
-                            let idx_num = idx_val.as_number()?;
-                            let idx = idx_num as usize;
-                            let chars: Vec<char> = s.chars().collect();
-                            if idx >= chars.len() {
-                                return Err(VmError::IndexOutOfBounds {
-                                    index: idx_num as isize,
-                                    len: chars.len(),
-                                });
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "cannot index into {}",
+                                    other.type_name_static()
+                                )))
                             }
-                            self.stack.push(Value::String(
-                                chars[idx].to_string(),
-                            ));
-                        }
-                        other => {
-                            return Err(VmError::TypeError(format!(
-                                "cannot index into {}",
-                                other.type_name_static()
-                            )))
                         }
                     }
                 }

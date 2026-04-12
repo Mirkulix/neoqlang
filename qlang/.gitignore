@@ -7,4 +7,16 @@ editors/vscode/out/
 data/models/
 data/text/
 data/mnist/
+data/wikitext2/
+data/mamba_30m*.bin
+data/qlang_model_*.qlbg
+data/qo.redb*
 target/
+node_modules/
+package-lock.json
+graphify-out/
+test-results/
+.claude-flow/
+**/*.log
+*.env
+.env
