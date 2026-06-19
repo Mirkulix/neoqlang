@@ -173,6 +173,90 @@ pub fn unpack_ternary(packed: &[u8], n_weights: usize, alpha: f32) -> Vec<f32> {
     weights
 }
 
+/// Packed ternary matrix-vector product — the real tokens/watt kernel.
+///
+/// Reads weights directly from 2-bit packed bytes, never expands to f32.
+/// This is the actual DRAM-bandwidth-saving kernel: 16x less weight traffic
+/// vs f32, 4x less than int8. The decode (2-bit → ±1) is done inline
+/// with a 2-bit mask — no unpacking allocations.
+///
+/// Uses flat (dense) indexing matching `pack_ternary`, so it is correct for
+/// any in_dim. When in_dim is a multiple of 4 the rows are byte-aligned and
+/// the inner loop is maximally vectorisable by the compiler.
+///
+/// y[j] = alpha * Σ_k decode(w_packed[j,k]) * x[k] + bias[j]
+/// Encoding (same as `pack_ternary`): 00=0, 01=+1, 11=-1, 4 weights per byte.
+pub fn ternary_packed_matvec(
+    w_packed: &[u8],
+    alpha: f32,
+    x: &[f32],
+    bias: &[f32],
+    out_dim: usize,
+    in_dim: usize,
+) -> Vec<f32> {
+    debug_assert_eq!(w_packed.len(), (out_dim * in_dim + 3) / 4);
+    debug_assert_eq!(x.len(), in_dim);
+    debug_assert_eq!(bias.len(), out_dim);
+
+    let mut y = bias.to_vec();
+    for j in 0..out_dim {
+        let base_idx = j * in_dim;
+        let mut sum = 0.0f32;
+        for k in 0..in_dim {
+            let flat = base_idx + k;
+            let bits = (w_packed[flat / 4] >> ((flat % 4) * 2)) & 0b11;
+            match bits {
+                0b01 => sum += x[k],
+                0b11 => sum -= x[k],
+                _ => {}
+            }
+        }
+        y[j] += alpha * sum;
+    }
+    y
+}
+
+/// Packed ternary batch forward pass with ReLU activation.
+///
+/// X is [batch, in_dim], w_packed is the output of `pack_ternary` on the
+/// [out_dim × in_dim] weight matrix stored row-major.
+/// Returns [batch, out_dim] with ReLU applied.
+///
+/// Same DRAM savings as `ternary_packed_matvec` but batched for multi-token inference.
+pub fn ternary_packed_forward_relu(
+    w_packed: &[u8],
+    alpha: f32,
+    x: &[f32],
+    bias: &[f32],
+    batch: usize,
+    out_dim: usize,
+    in_dim: usize,
+) -> Vec<f32> {
+    debug_assert_eq!(w_packed.len(), (out_dim * in_dim + 3) / 4);
+    debug_assert_eq!(x.len(), batch * in_dim);
+    debug_assert_eq!(bias.len(), out_dim);
+
+    let mut output = vec![0.0f32; batch * out_dim];
+    for b in 0..batch {
+        let x_row = &x[b * in_dim..(b + 1) * in_dim];
+        for j in 0..out_dim {
+            let base_idx = j * in_dim;
+            let mut sum = 0.0f32;
+            for k in 0..in_dim {
+                let flat = base_idx + k;
+                let bits = (w_packed[flat / 4] >> ((flat % 4) * 2)) & 0b11;
+                match bits {
+                    0b01 => sum += x_row[k],
+                    0b11 => sum -= x_row[k],
+                    _ => {}
+                }
+            }
+            output[b * out_dim + j] = (alpha * sum + bias[j]).max(0.0);
+        }
+    }
+    output
+}
+
 /// Count operations saved by ternary vs f32.
 pub fn ops_saved(weights: &[f32]) -> (usize, usize, usize) {
     let total = weights.len();
@@ -256,6 +340,116 @@ mod tests {
         assert_eq!(tern_ops, 4); // only 4 non-zero add/sub
         println!("f32: {} ops, ternary: {} ops, saved: {:.0}%",
             f32_ops, tern_ops, (1.0 - tern_ops as f32 / f32_ops as f32) * 100.0);
+    }
+
+    #[test]
+    fn packed_matvec_basic_correctness() {
+        // W = [[+1, -1, 0]] (1x3), x=[3,2,1], bias=[0] → y = 3-2+0 = 1
+        let w_f32 = vec![1.0f32, -1.0, 0.0];
+        let x = vec![3.0f32, 2.0, 1.0];
+        let bias = vec![0.0f32];
+        let (w_packed, alpha) = pack_ternary(&w_f32);
+
+        let y = ternary_packed_matvec(&w_packed, alpha, &x, &bias, 1, 3);
+        assert!((y[0] - 1.0).abs() < 1e-5, "expected 1.0, got {}", y[0]);
+    }
+
+    #[test]
+    fn packed_matvec_matches_unpacked() {
+        // W = [[+1,-1,0,+1],[0,+1,-1,0]] (2x4), alpha=1.0
+        let w_f32 = vec![1.0f32, -1.0, 0.0, 1.0, 0.0, 1.0, -1.0, 0.0];
+        let x = vec![1.0f32, 2.0, 3.0, 4.0];
+        let bias = vec![0.5f32, -0.5];
+        let (w_packed, alpha) = pack_ternary(&w_f32);
+
+        let y_ref = ternary_matvec(&w_f32, &x, &bias, 2, 4);
+        let y_packed = ternary_packed_matvec(&w_packed, alpha, &x, &bias, 2, 4);
+
+        for (i, (a, b)) in y_ref.iter().zip(y_packed.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-5, "row {}: ref={} packed={}", i, a, b);
+        }
+    }
+
+    #[test]
+    fn packed_forward_relu_matches_unpacked() {
+        let in_dim = 8;
+        let out_dim = 4;
+        let batch = 3;
+        let w_f32: Vec<f32> = (0..out_dim * in_dim).map(|i| {
+            let v = (i as f32 * 0.7).sin();
+            if v > 0.4 { 1.0 } else if v < -0.4 { -1.0 } else { 0.0 }
+        }).collect();
+        let x: Vec<f32> = (0..batch * in_dim).map(|i| (i as f32 * 0.1).cos()).collect();
+        let bias = vec![0.1f32; out_dim];
+        let (w_packed, alpha) = pack_ternary(&w_f32);
+
+        let y_ref = ternary_forward_relu(&x, &w_f32, &bias, batch, out_dim, in_dim);
+        let y_packed = ternary_packed_forward_relu(&w_packed, alpha, &x, &bias, batch, out_dim, in_dim);
+
+        for (i, (a, b)) in y_ref.iter().zip(y_packed.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-4, "idx {}: ref={} packed={}", i, a, b);
+        }
+    }
+
+    #[test]
+    fn packed_matvec_unaligned_in_dim() {
+        // in_dim=5: last byte holds 1 weight (bits [1:0]) + 3 padding bits
+        let w_f32 = vec![1.0f32, -1.0, 0.0, 1.0, -1.0]; // 1x5
+        let x = vec![1.0f32, 1.0, 1.0, 1.0, 1.0];
+        let bias = vec![0.0f32];
+        let (w_packed, alpha) = pack_ternary(&w_f32);
+
+        let y_ref = ternary_matvec(&w_f32, &x, &bias, 1, 5);
+        let y_packed = ternary_packed_matvec(&w_packed, alpha, &x, &bias, 1, 5);
+        assert!((y_ref[0] - y_packed[0]).abs() < 1e-5,
+            "unaligned: ref={} packed={}", y_ref[0], y_packed[0]);
+    }
+
+    #[test]
+    fn packed_kernel_bandwidth_comparison() {
+        let in_dim = 4096;
+        let out_dim = 4096;
+        let x: Vec<f32> = (0..in_dim).map(|i| (i as f32 * 0.01).sin()).collect();
+        let bias = vec![0.0f32; out_dim];
+        let w_f32: Vec<f32> = (0..out_dim * in_dim).map(|i| {
+            let v = (i as f32 * 0.37).sin();
+            if v > 0.3 { 1.0 } else if v < -0.3 { -1.0 } else { 0.0 }
+        }).collect();
+        let (w_packed, alpha) = pack_ternary(&w_f32);
+
+        let f32_bytes = out_dim * in_dim * 4;
+        let packed_bytes = w_packed.len();
+        println!("\nBandwidth: {}x{} weight matrix", out_dim, in_dim);
+        println!("  f32:     {} MB", f32_bytes / 1_048_576);
+        println!("  2-bit:   {} KB  ({:.1}x smaller)",
+            packed_bytes / 1024, f32_bytes as f32 / packed_bytes as f32);
+
+        let n_runs = 5usize;
+        let start = std::time::Instant::now();
+        for _ in 0..n_runs {
+            std::hint::black_box(ternary_matvec(&w_f32, &x, &bias, out_dim, in_dim));
+        }
+        let t_unpacked = start.elapsed();
+
+        let start = std::time::Instant::now();
+        for _ in 0..n_runs {
+            std::hint::black_box(ternary_packed_matvec(&w_packed, alpha, &x, &bias, out_dim, in_dim));
+        }
+        let t_packed = start.elapsed();
+
+        println!("  f32-stored matvec: {:?} ({} runs)", t_unpacked, n_runs);
+        println!("  packed matvec:     {:?} ({} runs)", t_packed, n_runs);
+        println!("  wall-clock speedup: {:.2}x",
+            t_unpacked.as_nanos() as f64 / t_packed.as_nanos() as f64);
+
+        // Correctness check
+        let y_ref = ternary_matvec(&w_f32, &x, &bias, out_dim, in_dim);
+        let y_pack = ternary_packed_matvec(&w_packed, alpha, &x, &bias, out_dim, in_dim);
+        let max_err = y_ref.iter().zip(y_pack.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        println!("  max |err|: {:.2e}", max_err);
+        assert!(max_err < 1e-3, "large error in packed kernel: {}", max_err);
     }
 
     /// Pure Rust f32 matmul without BLAS (fair comparison).
