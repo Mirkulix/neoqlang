@@ -140,10 +140,11 @@ pub fn pack_ternary(weights: &[f32]) -> (Vec<u8>, f32) {
     let n_bytes = (weights.len() + 3) / 4;
     let mut packed = vec![0u8; n_bytes];
 
+    let threshold = alpha * 0.7;
     for (i, &w) in weights.iter().enumerate() {
-        let bits: u8 = if w > 0.5 {
+        let bits: u8 = if w > threshold {
             0b01 // +1
-        } else if w < -0.5 {
+        } else if w < -threshold {
             0b11 // -1
         } else {
             0b00 // 0

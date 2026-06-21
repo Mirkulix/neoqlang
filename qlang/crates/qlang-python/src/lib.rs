@@ -16,6 +16,7 @@ use qlang_core::ops::Op;
 use qlang_core::serial;
 use qlang_core::tensor::{Dim, Dtype, Shape, TensorData, TensorType};
 use qlang_runtime::executor;
+use qlang_runtime::ternary_ops;
 use qlang_runtime::training::MlpWeights;
 
 // ---------------------------------------------------------------------------
@@ -379,6 +380,118 @@ fn train_mlp(
 }
 
 // ---------------------------------------------------------------------------
+// Packed ternary kernel — direct Python access
+// ---------------------------------------------------------------------------
+
+/// Pack a list of f32 weights into 2-bit ternary format.
+///
+/// Uses threshold projection: {-1, 0, +1} encoded as 2 bits per weight,
+/// 4 weights per byte (dense sequential packing, no per-row padding).
+///
+/// Args:
+///     weights: List of f32 weight values.
+///
+/// Returns:
+///     Tuple of (packed_bytes: list[int], alpha: float).
+///     packed_bytes has ceil(len(weights) / 4) bytes.
+#[pyfunction]
+fn pack_ternary_weights(weights: Vec<f32>) -> PyResult<(Vec<u8>, f32)> {
+    if weights.is_empty() {
+        return Err(PyRuntimeError::new_err("weights must not be empty"));
+    }
+    Ok(ternary_ops::pack_ternary(&weights))
+}
+
+/// Matrix-vector multiply using a 2-bit packed ternary weight matrix.
+///
+/// Reads directly from packed bytes — no f32 decode step, 16× less DRAM
+/// bandwidth than a standard f32 matmul on the same logical weights.
+///
+/// Args:
+///     w_packed: Packed bytes from pack_ternary_weights (dense, no row padding).
+///     alpha:    Scale factor (returned by pack_ternary_weights).
+///     x:        Input vector, length in_dim.
+///     bias:     Bias vector, length out_dim.
+///     out_dim:  Number of output rows.
+///     in_dim:   Number of input columns.
+///
+/// Returns:
+///     Output vector of length out_dim.
+#[pyfunction]
+fn packed_matvec(
+    w_packed: Vec<u8>,
+    alpha: f32,
+    x: Vec<f32>,
+    bias: Vec<f32>,
+    out_dim: usize,
+    in_dim: usize,
+) -> PyResult<Vec<f32>> {
+    let expected_bytes = (out_dim * in_dim + 3) / 4;
+    if w_packed.len() < expected_bytes {
+        return Err(PyRuntimeError::new_err(format!(
+            "w_packed too short: got {} bytes, need {} for {}×{} matrix",
+            w_packed.len(), expected_bytes, out_dim, in_dim,
+        )));
+    }
+    if x.len() != in_dim {
+        return Err(PyRuntimeError::new_err(format!(
+            "x length {} != in_dim {}", x.len(), in_dim,
+        )));
+    }
+    if bias.len() != out_dim {
+        return Err(PyRuntimeError::new_err(format!(
+            "bias length {} != out_dim {}", bias.len(), out_dim,
+        )));
+    }
+    Ok(ternary_ops::ternary_packed_matvec(&w_packed, alpha, &x, &bias, out_dim, in_dim))
+}
+
+/// Batched packed-ternary forward pass with ReLU.
+///
+/// Applies y = ReLU(alpha * W_packed @ x[i] + bias) for each row i in the batch.
+///
+/// Args:
+///     w_packed: Packed bytes (same layout as packed_matvec).
+///     alpha:    Scale factor.
+///     x:        Flat batch of input vectors, length batch * in_dim.
+///     bias:     Bias vector, length out_dim.
+///     batch:    Number of samples.
+///     out_dim:  Number of output neurons.
+///     in_dim:   Number of input features.
+///
+/// Returns:
+///     Flat output list, length batch * out_dim.
+#[pyfunction]
+fn packed_forward_relu(
+    w_packed: Vec<u8>,
+    alpha: f32,
+    x: Vec<f32>,
+    bias: Vec<f32>,
+    batch: usize,
+    out_dim: usize,
+    in_dim: usize,
+) -> PyResult<Vec<f32>> {
+    let expected_bytes = (out_dim * in_dim + 3) / 4;
+    if w_packed.len() < expected_bytes {
+        return Err(PyRuntimeError::new_err(format!(
+            "w_packed too short: got {} bytes, need {} for {}×{} matrix",
+            w_packed.len(), expected_bytes, out_dim, in_dim,
+        )));
+    }
+    if x.len() != batch * in_dim {
+        return Err(PyRuntimeError::new_err(format!(
+            "x length {} != batch({}) * in_dim({})", x.len(), batch, in_dim,
+        )));
+    }
+    if bias.len() != out_dim {
+        return Err(PyRuntimeError::new_err(format!(
+            "bias length {} != out_dim {}", bias.len(), out_dim,
+        )));
+    }
+    Ok(ternary_ops::ternary_packed_forward_relu(&w_packed, alpha, &x, &bias, batch, out_dim, in_dim))
+}
+
+// ---------------------------------------------------------------------------
 // Module definition
 // ---------------------------------------------------------------------------
 
@@ -388,5 +501,8 @@ fn qlang(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_function(wrap_pyfunction!(compress_ternary, m)?)?;
     m.add_function(wrap_pyfunction!(train_mlp, m)?)?;
+    m.add_function(wrap_pyfunction!(pack_ternary_weights, m)?)?;
+    m.add_function(wrap_pyfunction!(packed_matvec, m)?)?;
+    m.add_function(wrap_pyfunction!(packed_forward_relu, m)?)?;
     Ok(())
 }
